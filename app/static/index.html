@@ -4,51 +4,88 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Transcript Maker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main>
-    <h1 class="logo">Transcript Maker</h1>
-    <p class="subtitle">Paste a YouTube URL and get a transcript</p>
+  <!-- Background grid pattern -->
+  <div class="bg-pattern">
+    <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid-sm" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.5"/>
+        </pattern>
+        <pattern id="grid-lg" width="120" height="120" patternUnits="userSpaceOnUse">
+          <rect width="120" height="120" fill="url(#grid-sm)"/>
+          <path d="M 120 0 L 0 0 0 120" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.5"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid-lg)"/>
+    </svg>
+  </div>
 
-    <div class="command-bar">
-      <input type="url" id="url-input" placeholder="https://www.youtube.com/watch?v=..." autofocus>
-      <button id="transcribe-btn">Transcribe</button>
-      <button id="cancel-btn" hidden>Cancel</button>
-    </div>
+  <main class="app" data-state="idle">
 
-    <div class="model-toggle">
-      <span class="toggle-label">Speaker detection</span>
-      <label class="switch">
-        <input type="checkbox" id="diarize-toggle">
-        <span class="slider"></span>
-      </label>
-    </div>
+    <section class="hero">
+      <h1 class="logo">Transcript Maker</h1>
+      <p class="subtitle">Paste a YouTube URL and get a transcript</p>
+
+      <div class="command-bar">
+        <svg class="command-bar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <input type="url" id="url-input" placeholder="https://www.youtube.com/watch?v=..." autofocus>
+        <kbd class="kbd-hint">Enter</kbd>
+        <label class="diarize-pill">
+          <input type="checkbox" id="diarize-toggle">
+          <span class="pill-track"><span class="pill-thumb"></span></span>
+          <span class="pill-label">Speakers</span>
+        </label>
+        <button id="transcribe-btn">
+          <span>Transcribe</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+        <button id="cancel-btn" hidden>Cancel</button>
+      </div>
+    </section>
 
     <div id="progress" hidden>
-      <div id="waveform" class="waveform stopped"></div>
+      <div class="waveform-container">
+        <div id="waveform" class="waveform stopped"></div>
+        <div class="waveform-glow"></div>
+      </div>
       <p id="progress-status" class="progress-status"></p>
     </div>
 
-    <div id="transcript-section" class="transcript-wrapper">
-      <div class="transcript-actions">
-        <button id="copy-btn" class="icon-btn">Copy</button>
-        <button id="download-btn" class="icon-btn">.txt</button>
+    <div id="transcript-section" class="transcript-card">
+      <div class="transcript-header">
+        <span id="transcript-title" class="transcript-title">Transcript</span>
+        <div class="transcript-actions">
+          <button id="copy-btn" class="action-btn" title="Copy transcript">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy</span>
+          </button>
+          <button id="download-btn" class="action-btn" title="Download as text">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>.txt</span>
+          </button>
+        </div>
       </div>
-      <div id="transcript" class="transcript"></div>
+      <div id="transcript" class="transcript-body"></div>
     </div>
 
-    <div id="error" class="error" hidden></div>
+    <div id="error" class="error-banner" hidden></div>
 
     <section id="history-section" class="history-section">
       <div class="history-header">
         <h2>History</h2>
         <button id="cleanup-btn" class="cleanup-btn">Clean up temp files</button>
       </div>
-      <div id="history-list" class="timeline">
+      <div id="history-list" class="history-grid">
         <p class="history-empty">No transcriptions yet.</p>
       </div>
     </section>
+
   </main>
 
   <div id="toast" class="toast" hidden></div>
