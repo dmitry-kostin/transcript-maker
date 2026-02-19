@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -27,6 +28,89 @@ from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ─── Demo / mock mode ───
+
+DEMO_TRANSCRIPT = (
+    "This is a simulated transcript generated in demo mode. "
+    "No real YouTube download or OpenAI API call was made. "
+    "The quick brown fox jumps over the lazy dog. "
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
+    "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+)
+
+DEMO_DOWNLOAD_SECONDS = 10
+DEMO_TRANSCRIBE_SECONDS = 10
+DEMO_TICK = 0.5
+
+
+async def _demo_event_generator(url: str, model: str, request: Request, record_id: str | None = None, title: str | None = None):
+    """Mock SSE generator — simulates download + transcribe with sleeps, no real APIs."""
+    title = title or f"Demo: {url[:60]}"
+    duration = random.randint(120, 7200)
+    use_chunks = random.random() < 0.5
+    num_chunks = random.randint(2, 6) if use_chunks else 1
+
+    try:
+        # Simulate download (10s)
+        steps = int(DEMO_DOWNLOAD_SECONDS / DEMO_TICK)
+        for i in range(steps):
+            if await request.is_disconnected():
+                return
+            pct = int((i + 1) / steps * 100)
+            yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": f"Downloading audio... {pct}%"})}
+            await asyncio.sleep(DEMO_TICK)
+
+        yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Download complete (42.0 MB)"})}
+
+        if await request.is_disconnected():
+            return
+
+        # Create or reset record
+        if record_id:
+            reset_record(record_id, model=model)
+        else:
+            record_id = create_record(title, url, duration, model=model)
+
+        yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
+        await asyncio.sleep(1.0)
+
+        if num_chunks > 1:
+            yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Audio split into {num_chunks} chunks", "record_id": record_id})}
+
+        # Simulate transcription (10s total, split across chunks)
+        steps_per_chunk = max(1, int(DEMO_TRANSCRIBE_SECONDS / DEMO_TICK / num_chunks))
+        for chunk_i in range(num_chunks):
+            if await request.is_disconnected():
+                return
+            chunk_label = f" chunk {chunk_i + 1} of {num_chunks}" if num_chunks > 1 else ""
+            yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{chunk_label}...", "record_id": record_id})}
+            if num_chunks > 1:
+                yield {"event": "chunk_progress", "data": json.dumps({"current": chunk_i, "total": num_chunks})}
+            for _ in range(steps_per_chunk):
+                if await request.is_disconnected():
+                    return
+                await asyncio.sleep(DEMO_TICK)
+
+        if await request.is_disconnected():
+            return
+
+        # Complete
+        full_text = DEMO_TRANSCRIPT
+        if model == "gpt-4o-transcribe-diarize":
+            full_text = "Speaker 1: " + DEMO_TRANSCRIPT
+        complete_record(record_id, full_text)
+        yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "title": title, "record_id": record_id})}
+        yield {"event": "done", "data": "{}"}
+
+    except Exception as e:
+        logger.error("Demo error: %s", e, exc_info=True)
+        if record_id:
+            fail_record(record_id, str(e))
+        yield {"event": "error", "data": json.dumps({"message": f"Demo error: {e}", "record_id": record_id})}
+    finally:
+        if record_id and get_record_status(record_id) == "in_progress":
+            fail_record(record_id, "Transcription interrupted")
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 MAX_DURATION_SECONDS = 4 * 60 * 60  # 4 hours
@@ -55,6 +139,29 @@ class TranscribeRequest(BaseModel):
 
 class RetranscribeRequest(BaseModel):
     model: str = ""
+
+
+@router.post("/api/demo/transcribe")
+async def demo_transcribe(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return EventSourceResponse(_demo_event_generator(body.get("url", "demo"), body.get("model", ""), request))
+
+
+@router.post("/api/demo/history/{record_id}/retranscribe")
+async def demo_retranscribe(record_id: str, request: Request):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    record = get_record(record_id)
+    if not record:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    body = await request.json()
+    return EventSourceResponse(_demo_event_generator(
+        record["url"], body.get("model", ""), request,
+        record_id=record_id, title=record["title"],
+    ))
 
 
 @router.post("/api/transcribe")

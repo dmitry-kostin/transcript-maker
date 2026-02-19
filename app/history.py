@@ -67,6 +67,7 @@ def _parse_md(path: Path) -> dict | None:
         "status": meta.get("status", "unknown"),
         "duration": int(meta.get("duration", 0) or 0),
         "model": meta.get("model", ""),
+        "words": int(meta.get("words", 0) or 0) or (len(body.split()) if body else 0),
         "created_at": meta.get("created_at", ""),
         "error": meta.get("error", ""),
         "body": body,
@@ -107,12 +108,14 @@ def complete_record(record_id: str, text: str) -> bool:
     if not parsed:
         return False
 
+    words = len(text.split()) if text else 0
     meta = {
         "title": parsed["title"],
         "url": parsed["url"],
         "status": "done",
         "duration": parsed["duration"],
         "model": parsed.get("model", ""),
+        "words": words,
         "created_at": parsed["created_at"],
         "error": "",
     }

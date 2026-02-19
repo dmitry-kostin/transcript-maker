@@ -85,6 +85,16 @@ poetry run python run.py
 
 Open http://127.0.0.1:8000 in your browser.
 
+### Demo Mode
+
+To test the UI without a real API key or internet connection, add `?demo` to the URL:
+
+```
+http://127.0.0.1:8000?demo
+```
+
+Demo mode simulates the full pipeline (10s download + 10s transcription) with fake data. No YouTube downloads or OpenAI API calls are made. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
+
 ## Configuration
 
 All settings use the `TM_` prefix and can be set via environment variables or a `.env` file.
@@ -110,6 +120,8 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `POST` | `/api/history/{id}/reveal` | Open Finder with the transcript file selected |
 | `DELETE` | `/api/history/{id}` | Delete a saved transcript |
 | `POST` | `/api/cleanup` | Clean up temp files and stale records |
+| `POST` | `/api/demo/transcribe` | Demo: simulated transcription (SSE stream) |
+| `POST` | `/api/demo/history/{id}/retranscribe` | Demo: simulated re-transcription (SSE stream) |
 
 ### POST /api/transcribe
 
