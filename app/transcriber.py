@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 MAX_UPLOAD_SIZE_MB = 25.0
+MAX_CHUNK_DURATION_SECONDS = 1200  # Whisper API rejects >1400s; use 1200s safety margin
 
 DEFAULT_MODEL = "gpt-4o-transcribe"
 SUPPORTED_MODELS = {"gpt-4o-transcribe", "gpt-4o-transcribe-diarize"}
@@ -41,15 +42,15 @@ def prepare_chunks(audio_path: Path) -> list[Path]:
     """Split audio into chunks under the API 25MB limit using ffmpeg.
     Returns a list of file paths (single-element if no split needed)."""
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
+    duration = _get_duration(audio_path)
 
-    if file_size_mb <= settings.max_chunk_size_mb:
-        logger.info("No chunking needed (%.1f MB)", file_size_mb)
+    if file_size_mb <= settings.max_chunk_size_mb and duration <= MAX_CHUNK_DURATION_SECONDS:
+        logger.info("No chunking needed (%.1f MB, %.0fs)", file_size_mb, duration)
         return [audio_path]
 
-    duration = _get_duration(audio_path)
     bytes_per_second = audio_path.stat().st_size / duration
     max_chunk_bytes = settings.max_chunk_size_mb * 1024 * 1024
-    chunk_duration = max_chunk_bytes / bytes_per_second
+    chunk_duration = min(max_chunk_bytes / bytes_per_second, MAX_CHUNK_DURATION_SECONDS)
 
     chunks = []
     offset = 0.0
