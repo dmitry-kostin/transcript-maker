@@ -2,6 +2,9 @@
 
 Paste a YouTube URL, get a transcript. A single-page web app that downloads audio from YouTube and transcribes it using OpenAI Whisper.
 
+<img width="750" height="585" alt="image" src="https://github.com/user-attachments/assets/55d2b77a-7b97-447b-94bc-fd1cc2318fe9" />
+
+
 ## Features
 
 - **YouTube audio download** via yt-dlp (any public YouTube video up to 4 hours)
