@@ -15,6 +15,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 60px 20px;
+  transition: background 0.2s, color 0.2s;
 }
 
 main {
@@ -23,20 +24,23 @@ main {
 }
 
 h1 {
-  font-size: 1.75rem;
+  font-size: 2rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .subtitle {
   color: #666;
-  margin-top: 4px;
-  margin-bottom: 32px;
+  margin-top: 8px;
+  margin-bottom: 36px;
 }
 
 .input-row {
   display: flex;
   gap: 8px;
+  margin-bottom: 28px;
 }
 
 input[type="url"] {
@@ -44,13 +48,14 @@ input[type="url"] {
   padding: 10px 14px;
   font-size: 0.95rem;
   border: 1.5px solid #d0d5dd;
-  border-radius: 8px;
+  border-radius: 10px;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 input[type="url"]:focus {
   border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 button {
@@ -58,18 +63,24 @@ button {
   font-size: 0.95rem;
   font-weight: 600;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 #transcribe-btn {
   background: #2563eb;
   color: #fff;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3);
 }
 
 #transcribe-btn:hover:not(:disabled) {
   background: #1d4ed8;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.35);
 }
 
 #transcribe-btn:disabled {
@@ -91,7 +102,8 @@ button {
   padding: 16px;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .progress ul {
@@ -102,7 +114,7 @@ button {
 }
 
 .progress li {
-  font-size: 0.875rem;
+  font-size: 0.9rem;
   color: #444;
 }
 
@@ -118,7 +130,8 @@ button {
   padding: 20px;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   white-space: pre-wrap;
   font-size: 0.925rem;
   line-height: 1.7;
@@ -148,7 +161,7 @@ button {
   padding: 14px 16px;
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #b91c1c;
   font-size: 0.9rem;
 }
@@ -159,16 +172,43 @@ button {
   margin-top: 48px;
 }
 
-.history-section h2 {
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.history-header h2 {
   font-size: 1.25rem;
   font-weight: 600;
-  margin-bottom: 16px;
+}
+
+.cleanup-btn {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: transparent;
+  color: #666;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cleanup-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #1a1a1a;
+}
+
+.cleanup-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 1px;
 }
 
 .history-empty {
@@ -183,7 +223,28 @@ button {
   padding: 12px 16px;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-left: 3px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.15s, transform 0.15s;
+  margin-bottom: 8px;
+}
+
+.history-card:hover {
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.history-card.status-done {
+  border-left-color: #22c55e;
+}
+
+.history-card.status-in_progress {
+  border-left-color: #3b82f6;
+}
+
+.history-card.status-error {
+  border-left-color: #ef4444;
 }
 
 .history-card .info {
@@ -233,9 +294,9 @@ button {
 
 .badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -261,4 +322,158 @@ button {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+/* Dark mode */
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #0f1117;
+    color: #e5e7eb;
+  }
+
+  h1 {
+    border-bottom-color: #2d3141;
+  }
+
+  .subtitle {
+    color: #9ca3af;
+  }
+
+  input[type="url"] {
+    background: #1a1d27;
+    color: #e5e7eb;
+    border-color: #2d3141;
+  }
+
+  input[type="url"]:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+
+  input[type="url"]::placeholder {
+    color: #6b7280;
+  }
+
+  #transcribe-btn {
+    background: #3b82f6;
+    box-shadow: 0 1px 2px rgba(59, 130, 246, 0.3);
+  }
+
+  #transcribe-btn:hover:not(:disabled) {
+    background: #2563eb;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.35);
+  }
+
+  .progress {
+    background: #1a1d27;
+    border-color: #2d3141;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+
+  .progress li {
+    color: #d1d5db;
+  }
+
+  .progress li::before {
+    color: #3b82f6;
+  }
+
+  .transcript {
+    background: #1a1d27;
+    border-color: #2d3141;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    color: #e5e7eb;
+  }
+
+  .actions button {
+    background: #1a1d27;
+    color: #e5e7eb;
+    border-color: #2d3141;
+  }
+
+  .actions button:hover {
+    background: #242836;
+  }
+
+  .error {
+    background: #1c1012;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+  }
+
+  .cleanup-btn {
+    color: #9ca3af;
+    border-color: #2d3141;
+  }
+
+  .cleanup-btn:hover:not(:disabled) {
+    background: #1a1d27;
+    color: #e5e7eb;
+  }
+
+  .history-card {
+    background: #1a1d27;
+    border-color: #2d3141;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+
+  .history-card:hover {
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .history-card.status-done {
+    border-left-color: #16a34a;
+  }
+
+  .history-card.status-in_progress {
+    border-left-color: #2563eb;
+  }
+
+  .history-card.status-error {
+    border-left-color: #dc2626;
+  }
+
+  .history-card .title {
+    color: #e5e7eb;
+  }
+
+  .history-card .meta {
+    color: #6b7280;
+  }
+
+  .history-card .card-actions button {
+    background: #1a1d27;
+    color: #e5e7eb;
+    border-color: #2d3141;
+  }
+
+  .history-card .card-actions button:hover {
+    background: #242836;
+  }
+
+  .history-card .card-actions button.delete-btn:hover {
+    background: #1c1012;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+  }
+
+  .badge-done {
+    background: #052e16;
+    color: #86efac;
+  }
+
+  .badge-in_progress {
+    background: #172554;
+    color: #93c5fd;
+  }
+
+  .badge-error {
+    background: #450a0a;
+    color: #fca5a5;
+  }
+
+  .history-empty {
+    color: #6b7280;
+  }
 }

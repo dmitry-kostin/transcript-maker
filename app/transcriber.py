@@ -22,8 +22,13 @@ def _get_duration(audio_path: Path) -> float:
         ],
         capture_output=True, text=True, check=True,
     )
-    info = json.loads(result.stdout)
-    duration = float(info["format"]["duration"])
+    try:
+        info = json.loads(result.stdout)
+        duration = float(info["format"]["duration"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Could not read audio metadata — ffprobe returned unexpected output"
+        ) from exc
     logger.info("ffprobe: %.1fs duration", duration)
     return duration
 

@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,14 +23,12 @@ def _slugify(text: str, max_len: int = 50) -> str:
 
 def _write_md(path: Path, meta: dict, body: str = "") -> None:
     """Write a markdown file with YAML frontmatter."""
-    lines = ["---"]
-    for k, v in meta.items():
-        lines.append(f'{k}: "{v}"')
-    lines.append("---")
+    frontmatter = yaml.dump(meta, default_flow_style=False, allow_unicode=True, sort_keys=False).rstrip("\n")
+    parts = [f"---\n{frontmatter}\n---"]
     if body:
-        lines.append("")
-        lines.append(body)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        parts.append("")
+        parts.append(body)
+    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
 
 
 def _parse_md(path: Path) -> dict | None:
@@ -51,10 +51,12 @@ def _parse_md(path: Path) -> dict | None:
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) >= 3:
-            for line in parts[1].strip().splitlines():
-                if ": " in line:
-                    k, v = line.split(": ", 1)
-                    meta[k.strip()] = v.strip().strip('"')
+            try:
+                loaded = yaml.safe_load(parts[1])
+                if isinstance(loaded, dict):
+                    meta = {k: str(v) if v is not None else "" for k, v in loaded.items()}
+            except yaml.YAMLError:
+                logger.warning("Invalid YAML frontmatter in %s", path)
             body = parts[2].strip()
 
     return {
@@ -91,16 +93,16 @@ def create_record(title: str, url: str, duration: float) -> str:
     return record_id
 
 
-def complete_record(record_id: str, text: str) -> None:
-    """Update a record to status: done and write the transcript body."""
+def complete_record(record_id: str, text: str) -> bool:
+    """Update a record to status: done and write the transcript body. Returns True if written."""
     path = _resolve_path(record_id)
     if not path:
         logger.warning("Cannot complete record %s: file not found", record_id)
-        return
+        return False
 
     parsed = _parse_md(path)
     if not parsed:
-        return
+        return False
 
     meta = {
         "title": parsed["title"],
@@ -112,18 +114,19 @@ def complete_record(record_id: str, text: str) -> None:
     }
     _write_md(path, meta, text)
     logger.info("Record completed: %s", record_id)
+    return True
 
 
-def fail_record(record_id: str, error_msg: str) -> None:
-    """Update a record to status: error."""
+def fail_record(record_id: str, error_msg: str) -> bool:
+    """Update a record to status: error. Returns True if written."""
     path = _resolve_path(record_id)
     if not path:
         logger.warning("Cannot fail record %s: file not found", record_id)
-        return
+        return False
 
     parsed = _parse_md(path)
     if not parsed:
-        return
+        return False
 
     meta = {
         "title": parsed["title"],
@@ -135,6 +138,7 @@ def fail_record(record_id: str, error_msg: str) -> None:
     }
     _write_md(path, meta)
     logger.info("Record failed: %s", record_id)
+    return True
 
 
 def get_history() -> list[dict]:
@@ -150,6 +154,17 @@ def get_history() -> list[dict]:
             records.append(parsed)
     records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     return records
+
+
+def get_record_status(record_id: str) -> str | None:
+    """Return the status of a record, or None if not found."""
+    path = _resolve_path(record_id)
+    if not path:
+        return None
+    parsed = _parse_md(path)
+    if not parsed:
+        return None
+    return parsed["status"]
 
 
 def get_result_path(record_id: str) -> Path | None:

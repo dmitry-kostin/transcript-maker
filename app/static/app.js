@@ -215,7 +215,7 @@ function renderHistory(records) {
       }
 
       return `
-        <div class="history-card">
+        <div class="history-card status-${r.status}">
           <span class="badge badge-${r.status}">${statusLabel}</span>
           <div class="info">
             <div class="title">${escapeHtml(r.title)}</div>
@@ -241,6 +241,37 @@ async function deleteRecord(id) {
   const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
   if (res.ok) loadHistory();
 }
+
+// --- Cleanup ---
+
+const cleanupBtn = document.getElementById("cleanup-btn");
+
+cleanupBtn.addEventListener("click", async () => {
+  if (!confirm("Delete all temporary files and clean up stale records?")) return;
+  cleanupBtn.disabled = true;
+  cleanupBtn.textContent = "Cleaning...";
+  try {
+    const res = await fetch("/api/cleanup", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      cleanupBtn.textContent = `Done! ${data.deleted_files} files, ${data.cleaned_records} records`;
+      setTimeout(() => {
+        cleanupBtn.textContent = "Clean up temp files";
+        cleanupBtn.disabled = false;
+      }, 2500);
+      loadHistory();
+    } else {
+      cleanupBtn.textContent = "Failed";
+      setTimeout(() => {
+        cleanupBtn.textContent = "Clean up temp files";
+        cleanupBtn.disabled = false;
+      }, 2000);
+    }
+  } catch {
+    cleanupBtn.textContent = "Clean up temp files";
+    cleanupBtn.disabled = false;
+  }
+});
 
 // Load history on page load
 loadHistory();
