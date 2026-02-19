@@ -16,6 +16,7 @@ class TestPrepareChunksSmallFile:
         # Patch settings to use 24MB limit
         import app.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
+        monkeypatch.setattr("app.transcriber._get_duration", lambda _: 600.0)
 
         result = prepare_chunks(audio)
         assert result == [audio]

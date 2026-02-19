@@ -40,6 +40,7 @@ let lastHistoryIds = "";
 const ICONS = {
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
 };
 
 // ─── Helpers ───
@@ -99,8 +100,9 @@ function setState(newState, data = {}) {
     progressStatus.textContent = data.message;
   }
 
-  // Error
+  // Error — show banner, clear status text
   if (newState === AppState.ERROR && data.message) {
+    progressStatus.textContent = "";
     errorEl.hidden = false;
     errorEl.textContent = data.message;
   }
@@ -194,16 +196,24 @@ function updateChunkProgress(current, total) {
   const barsPerChunk = Math.floor(BAR_COUNT / total);
   const completedBars = current * barsPerChunk;
 
+  const center = (BAR_COUNT - 1) / 2;
   for (let i = 0; i < bars.length; i++) {
     if (i < completedBars) {
       bars[i].style.background = "var(--green)";
       bars[i].style.animation = "none";
       bars[i].style.opacity = "0.8";
-      const center = (BAR_COUNT - 1) / 2;
       const dist = Math.abs(i - center) / center;
-      const h = 12 + 44 * (1 - dist * dist);
+      const h = 56 - dist * 24;
       bars[i].style.height = `${h.toFixed(1)}px`;
     }
+  }
+
+  // Transition bars: blend static green into pulsing blue
+  const transitionBars = 3;
+  for (let i = completedBars; i < Math.min(completedBars + transitionBars, bars.length); i++) {
+    const t = (i - completedBars) / transitionBars;
+    const minH = 10 + (1 - t) * 20;
+    bars[i].style.setProperty("--min", `${minH.toFixed(1)}px`);
   }
 }
 
@@ -226,18 +236,17 @@ function showToast(msg) {
 
 // ─── Transcription ───
 
-async function startTranscription(url) {
+async function runSSE(fetchUrl, fetchBody) {
   resetUI();
   initWaveform();
   setState(AppState.DOWNLOADING, { message: "Downloading audio..." });
   abortController = new AbortController();
 
   try {
-    const diarize = document.getElementById("diarize-toggle").checked;
-    const response = await fetch("/api/transcribe", {
+    const response = await fetch(fetchUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, model: diarize ? "gpt-4o-transcribe-diarize" : "" }),
+      body: JSON.stringify(fetchBody),
       signal: abortController.signal,
     });
 
@@ -284,17 +293,21 @@ async function startTranscription(url) {
     }
   } finally {
     abortController = null;
-    if (currentState !== AppState.DONE && currentState !== AppState.ERROR) {
-      transcribeBtn.hidden = false;
-      cancelBtn.hidden = true;
-      urlInput.disabled = false;
-    } else {
-      transcribeBtn.hidden = false;
-      cancelBtn.hidden = true;
-      urlInput.disabled = false;
-    }
+    transcribeBtn.hidden = false;
+    cancelBtn.hidden = true;
+    urlInput.disabled = false;
     loadHistory();
   }
+}
+
+async function startTranscription(url) {
+  const diarize = document.getElementById("diarize-toggle").checked;
+  runSSE("/api/transcribe", { url, model: diarize ? "gpt-4o-transcribe-diarize" : "" });
+}
+
+function retranscribe(id) {
+  const diarize = document.getElementById("diarize-toggle").checked;
+  runSSE(`/api/history/${id}/retranscribe`, { model: diarize ? "gpt-4o-transcribe-diarize" : "" });
 }
 
 function handleEvent(event, data) {
@@ -389,6 +402,8 @@ transcriptEl.addEventListener("scroll", () => {
 
 // ─── History ───
 
+const bodyCache = new Map();
+
 async function loadHistory() {
   try {
     const res = await fetch("/api/history");
@@ -398,6 +413,7 @@ async function loadHistory() {
     const currentIds = records.map((r) => r.id + r.status).join(",");
     if (currentIds !== lastHistoryIds) {
       lastHistoryIds = currentIds;
+      bodyCache.clear();
       renderHistory(records);
     }
 
@@ -421,19 +437,25 @@ function renderHistory(records) {
       const date = r.created_at ? new Date(r.created_at + "Z").toLocaleDateString() : "";
       const dur = formatDuration(r.duration);
       const statusLabel = r.status === "in_progress" ? "in progress" : r.status;
-      const meta = [statusLabel, dur, date].filter(Boolean).join(" \u00b7 ");
+      const modelLabel = r.model === "gpt-4o-transcribe-diarize" ? "speakers" : "";
+      const meta = [statusLabel, modelLabel, dur, date].filter(Boolean).join(" \u00b7 ");
 
       let actions = "";
       if (r.status === "done") {
         actions = `
-          <button onclick="revealInFinder('${r.id}')" title="Show in Finder">${ICONS.folder} Finder</button>
-          <button class="delete-btn" onclick="deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
+          <button onclick="event.stopPropagation(); retranscribe('${r.id}')" title="Re-transcribe">${ICONS.refresh} Re-transcribe</button>
+          <button onclick="event.stopPropagation(); revealInFinder('${r.id}')" title="Show in Finder">${ICONS.folder} Finder</button>
+          <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
       } else if (r.status === "error") {
-        actions = `<button class="delete-btn" onclick="deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
+        actions = `
+          <button onclick="event.stopPropagation(); retranscribe('${r.id}')" title="Retry">${ICONS.refresh} Retry</button>
+          <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
       }
 
+      const expandable = r.status === "done" ? "expandable" : "";
+
       return `
-        <div class="history-card" style="animation-delay: ${(i * 0.05).toFixed(2)}s">
+        <div class="history-card ${expandable}" data-id="${r.id}" data-status="${r.status}" onclick="handleCardClick(this)" style="animation-delay: ${(i * 0.05).toFixed(2)}s">
           <span class="status-dot ${r.status}"></span>
           <div class="card-content">
             <div class="card-title">${escapeHtml(r.title)}</div>
@@ -443,6 +465,34 @@ function renderHistory(records) {
         </div>`;
     })
     .join("");
+}
+
+async function handleCardClick(cardEl) {
+  if (cardEl.dataset.status !== "done") return;
+  const id = cardEl.dataset.id;
+  await toggleCardBody(id, cardEl);
+}
+
+async function toggleCardBody(id, cardEl) {
+  const existing = cardEl.querySelector(".card-body");
+  if (existing) {
+    existing.remove();
+    cardEl.classList.remove("expanded");
+    return;
+  }
+  if (!bodyCache.has(id)) {
+    const res = await fetch(`/api/history/${id}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    bodyCache.set(id, data.body || "");
+  }
+  const body = bodyCache.get(id);
+  if (!body) return;
+  const div = document.createElement("div");
+  div.className = "card-body";
+  div.textContent = body;
+  cardEl.appendChild(div);
+  cardEl.classList.add("expanded");
 }
 
 async function revealInFinder(id) {
