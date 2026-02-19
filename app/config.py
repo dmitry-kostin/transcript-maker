@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     openai_api_key: str
     temp_dir: str = str(PROJECT_ROOT / "tmp")
     results_dir: str = str(PROJECT_ROOT / "results")
-    whisper_model: str = "whisper-1"
     max_chunk_size_mb: float = 24.0
     audio_format: str = "mp3"
 

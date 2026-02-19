@@ -8,25 +8,34 @@
 </head>
 <body>
   <main>
-    <h1>Transcript Maker</h1>
+    <h1 class="logo">Transcript Maker</h1>
     <p class="subtitle">Paste a YouTube URL and get a transcript</p>
 
-    <div class="input-row">
+    <div class="command-bar">
       <input type="url" id="url-input" placeholder="https://www.youtube.com/watch?v=..." autofocus>
       <button id="transcribe-btn">Transcribe</button>
       <button id="cancel-btn" hidden>Cancel</button>
     </div>
 
-    <div id="progress" class="progress" hidden>
-      <ul id="progress-log"></ul>
+    <div class="model-toggle">
+      <span class="toggle-label">Speaker detection</span>
+      <label class="switch">
+        <input type="checkbox" id="diarize-toggle">
+        <span class="slider"></span>
+      </label>
     </div>
 
-    <div id="transcript-section" hidden>
-      <div id="transcript" class="transcript"></div>
-      <div class="actions">
-        <button id="copy-btn">Copy to Clipboard</button>
-        <button id="download-btn">Download .txt</button>
+    <div id="progress" hidden>
+      <div id="waveform" class="waveform stopped"></div>
+      <p id="progress-status" class="progress-status"></p>
+    </div>
+
+    <div id="transcript-section" class="transcript-wrapper">
+      <div class="transcript-actions">
+        <button id="copy-btn" class="icon-btn">Copy</button>
+        <button id="download-btn" class="icon-btn">.txt</button>
       </div>
+      <div id="transcript" class="transcript"></div>
     </div>
 
     <div id="error" class="error" hidden></div>
@@ -36,12 +45,13 @@
         <h2>History</h2>
         <button id="cleanup-btn" class="cleanup-btn">Clean up temp files</button>
       </div>
-      <div id="history-list" class="history-list">
+      <div id="history-list" class="timeline">
         <p class="history-empty">No transcriptions yet.</p>
       </div>
     </section>
   </main>
 
+  <div id="toast" class="toast" hidden></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

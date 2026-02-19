@@ -2,16 +2,19 @@ const urlInput = document.getElementById("url-input");
 const transcribeBtn = document.getElementById("transcribe-btn");
 const cancelBtn = document.getElementById("cancel-btn");
 const progressEl = document.getElementById("progress");
-const progressLog = document.getElementById("progress-log");
+const waveformEl = document.getElementById("waveform");
+const progressStatus = document.getElementById("progress-status");
 const transcriptSection = document.getElementById("transcript-section");
 const transcriptEl = document.getElementById("transcript");
 const errorEl = document.getElementById("error");
 const copyBtn = document.getElementById("copy-btn");
 const downloadBtn = document.getElementById("download-btn");
 const historyList = document.getElementById("history-list");
+const toastEl = document.getElementById("toast");
 
 let abortController = null;
 let pollTimer = null;
+let lastHistoryIds = "";
 
 function isYouTubeUrl(url) {
   try {
@@ -25,10 +28,53 @@ function isYouTubeUrl(url) {
   }
 }
 
+// --- Waveform ---
+
+function initWaveform() {
+  waveformEl.innerHTML = "";
+  for (let i = 0; i < 36; i++) {
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const h = 0.3 + Math.random() * 0.7;
+    bar.style.height = `${h * 100}%`;
+    bar.style.animationDelay = `${(i * 0.06).toFixed(2)}s`;
+    waveformEl.appendChild(bar);
+  }
+}
+
+function startWaveform() {
+  waveformEl.classList.remove("stopped");
+}
+
+function stopWaveform() {
+  waveformEl.classList.add("stopped");
+}
+
+// --- Toast ---
+
+let toastTimer = null;
+
+function showToast(msg) {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastEl.textContent = msg;
+  toastEl.hidden = false;
+  // Force reflow to restart animation
+  toastEl.classList.remove("active");
+  void toastEl.offsetWidth;
+  toastEl.classList.add("active");
+  toastTimer = setTimeout(() => {
+    toastEl.classList.remove("active");
+    setTimeout(() => { toastEl.hidden = true; }, 300);
+  }, 1500);
+}
+
+// --- Core UI ---
+
 function reset() {
   progressEl.hidden = true;
-  progressLog.innerHTML = "";
-  transcriptSection.hidden = true;
+  progressStatus.textContent = "";
+  stopWaveform();
+  transcriptSection.classList.remove("show", "visible");
   transcriptEl.textContent = "";
   errorEl.hidden = true;
   errorEl.textContent = "";
@@ -40,11 +86,9 @@ function setProcessing(active) {
   urlInput.disabled = active;
 }
 
-function appendProgress(msg) {
+function setStatus(msg) {
   progressEl.hidden = false;
-  const li = document.createElement("li");
-  li.textContent = msg;
-  progressLog.appendChild(li);
+  progressStatus.textContent = msg;
 }
 
 function showError(msg) {
@@ -53,8 +97,13 @@ function showError(msg) {
 }
 
 function showTranscript(text) {
-  transcriptSection.hidden = false;
   transcriptEl.textContent = text;
+  transcriptSection.classList.add("show");
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      transcriptSection.classList.add("visible");
+    });
+  });
 }
 
 function formatDuration(seconds) {
@@ -71,13 +120,16 @@ function formatDuration(seconds) {
 async function startTranscription(url) {
   reset();
   setProcessing(true);
+  initWaveform();
+  startWaveform();
   abortController = new AbortController();
 
   try {
+    const diarize = document.getElementById("diarize-toggle").checked;
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, model: diarize ? "gpt-4o-transcribe-diarize" : "" }),
       signal: abortController.signal,
     });
 
@@ -116,6 +168,7 @@ async function startTranscription(url) {
   } finally {
     abortController = null;
     setProcessing(false);
+    stopWaveform();
     loadHistory();
   }
 }
@@ -123,13 +176,15 @@ async function startTranscription(url) {
 function handleEvent(event, data) {
   switch (event) {
     case "progress":
-      appendProgress(data.message);
+      setStatus(data.message);
       break;
     case "transcript":
+      stopWaveform();
       showTranscript(data.text);
-      appendProgress("Done!");
+      setStatus("Done!");
       break;
     case "error":
+      stopWaveform();
       showError(data.message);
       break;
   }
@@ -149,7 +204,8 @@ transcribeBtn.addEventListener("click", () => {
 cancelBtn.addEventListener("click", () => {
   if (abortController) {
     abortController.abort();
-    appendProgress("Cancelled.");
+    stopWaveform();
+    setStatus("Cancelled.");
   }
 });
 
@@ -159,8 +215,7 @@ urlInput.addEventListener("keydown", (e) => {
 
 copyBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(transcriptEl.textContent);
-  copyBtn.textContent = "Copied!";
-  setTimeout(() => (copyBtn.textContent = "Copy to Clipboard"), 1500);
+  showToast("Copied!");
 });
 
 downloadBtn.addEventListener("click", () => {
@@ -180,9 +235,14 @@ async function loadHistory() {
     const res = await fetch("/api/history");
     if (!res.ok) return;
     const records = await res.json();
-    renderHistory(records);
 
-    // Chain next poll via setTimeout (avoids stacking concurrent fetches)
+    // Cache check: skip re-render if records haven't changed
+    const currentIds = records.map((r) => r.id + r.status).join(",");
+    if (currentIds !== lastHistoryIds) {
+      lastHistoryIds = currentIds;
+      renderHistory(records);
+    }
+
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (records.some((r) => r.status === "in_progress")) {
       pollTimer = setTimeout(loadHistory, 3000);
@@ -199,28 +259,25 @@ function renderHistory(records) {
   }
 
   historyList.innerHTML = records
-    .map((r) => {
+    .map((r, i) => {
       const date = r.created_at ? new Date(r.created_at + "Z").toLocaleDateString() : "";
       const dur = formatDuration(r.duration);
-      const meta = [dur, date].filter(Boolean).join(" · ");
       const statusLabel = r.status === "in_progress" ? "in progress" : r.status;
+      const meta = [statusLabel, dur, date].filter(Boolean).join(" · ");
 
       let actions = "";
       if (r.status === "done") {
         actions = `
-          <button onclick="revealInFinder('${r.id}')">Show in Finder</button>
+          <button onclick="revealInFinder('${r.id}')">Finder</button>
           <button class="delete-btn" onclick="deleteRecord('${r.id}')">Delete</button>`;
       } else if (r.status === "error") {
         actions = `<button class="delete-btn" onclick="deleteRecord('${r.id}')">Delete</button>`;
       }
 
       return `
-        <div class="history-card status-${r.status}">
-          <span class="badge badge-${r.status}">${statusLabel}</span>
-          <div class="info">
-            <div class="title">${escapeHtml(r.title)}</div>
-            <div class="meta">${meta}${r.status === "error" && r.error ? " · " + escapeHtml(r.error) : ""}</div>
-          </div>
+        <div class="timeline-item status-${r.status}" style="animation-delay: ${(i * 0.05).toFixed(2)}s">
+          <div class="title">${escapeHtml(r.title)}</div>
+          <div class="meta">${meta}${r.status === "error" && r.error ? " · " + escapeHtml(r.error) : ""}</div>
           <div class="card-actions">${actions}</div>
         </div>`;
     })
@@ -239,7 +296,10 @@ async function revealInFinder(id) {
 
 async function deleteRecord(id) {
   const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
-  if (res.ok) loadHistory();
+  if (res.ok) {
+    lastHistoryIds = ""; // Force re-render
+    loadHistory();
+  }
 }
 
 // --- Cleanup ---
@@ -259,6 +319,7 @@ cleanupBtn.addEventListener("click", async () => {
         cleanupBtn.textContent = "Clean up temp files";
         cleanupBtn.disabled = false;
       }, 2500);
+      lastHistoryIds = ""; // Force re-render
       loadHistory();
     } else {
       cleanupBtn.textContent = "Failed";
@@ -273,5 +334,6 @@ cleanupBtn.addEventListener("click", async () => {
   }
 });
 
-// Load history on page load
+// Init
+initWaveform();
 loadHistory();
