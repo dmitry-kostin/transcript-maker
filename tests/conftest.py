@@ -1,11 +1,6 @@
-import os
-import shutil
 from pathlib import Path
 
 import pytest
-
-# Set env before any app imports
-os.environ.setdefault("TM_OPENAI_API_KEY", "test-key-not-real")
 
 
 @pytest.fixture

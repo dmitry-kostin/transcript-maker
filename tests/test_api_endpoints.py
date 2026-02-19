@@ -1,7 +1,3 @@
-import os
-
-os.environ.setdefault("TM_OPENAI_API_KEY", "test-key-not-real")
-
 import pytest
 from fastapi.testclient import TestClient
 

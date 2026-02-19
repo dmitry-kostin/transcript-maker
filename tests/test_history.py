@@ -1,7 +1,3 @@
-import os
-
-os.environ.setdefault("TM_OPENAI_API_KEY", "test-key-not-real")
-
 from pathlib import Path
 from app.history import (
     _slugify, _write_md, _parse_md,
