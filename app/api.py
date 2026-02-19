@@ -31,6 +31,7 @@ MAX_DURATION_SECONDS = 4 * 60 * 60  # 4 hours
 
 class TranscribeRequest(BaseModel):
     url: str
+    model: str = ""
 
     @field_validator("url")
     @classmethod
@@ -84,7 +85,7 @@ async def transcribe(req: TranscribeRequest, request: Request):
                     logger.warning("Client disconnected during transcription")
                     break
                 yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id})}
-                text = await transcribe_chunk(chunk_path)
+                text = await transcribe_chunk(chunk_path, model=req.model or None)
                 transcript_parts.append(text)
 
             # Guard: don't save partial transcript if client disconnected
