@@ -13,7 +13,6 @@ client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 MAX_UPLOAD_SIZE_MB = 25.0
 
-# Change this to switch the default transcription model
 DEFAULT_MODEL = "gpt-4o-transcribe"
 SUPPORTED_MODELS = {"gpt-4o-transcribe", "gpt-4o-transcribe-diarize"}
 
