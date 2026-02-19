@@ -7,14 +7,45 @@
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
     </pattern>
+    <clipPath id="lc">
+      <circle cx="32" cy="22" r="15.5"/>
+    </clipPath>
   </defs>
 
   <rect width="900" height="300" rx="16" fill="#131318"/>
   <rect width="900" height="300" rx="16" fill="url(#grid)"/>
 
-  <text x="450" y="115" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" fill="url(#titleGrad)">Transcript Maker</text>
+  <!-- Lollipop icon -->
+  <g transform="translate(210, 55) scale(1.25)">
+    <rect x="29" y="38" width="6" height="22" rx="3" fill="#f0a0b4" stroke="#c2185b" stroke-width="1.5"/>
+    <circle cx="32" cy="22" r="17" fill="#fce4ec" stroke="#c2185b" stroke-width="2.5"/>
+    <g clip-path="url(#lc)">
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#e53935"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#64b5f6" transform="rotate(45,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#c6d84a" transform="rotate(90,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#fff" transform="rotate(135,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#e53935" transform="rotate(180,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#64b5f6" transform="rotate(225,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#c6d84a" transform="rotate(270,32,22)"/>
+      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#fff" transform="rotate(315,32,22)"/>
+    </g>
+    <g stroke="#c2185b" stroke-width="2" fill="none" stroke-linecap="round">
+      <path d="M32 22Q32 13 36 7"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(45,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(90,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(135,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(180,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(225,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(270,32,22)"/>
+      <path d="M32 22Q32 13 36 7" transform="rotate(315,32,22)"/>
+    </g>
+  </g>
 
-  <text x="450" y="155" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="18" fill="rgba(255,255,255,0.56)">Paste a YouTube URL, get a transcript</text>
+  <!-- Title -->
+  <text x="290" y="100" text-anchor="start" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" fill="url(#titleGrad)">Transcript Maker</text>
+
+  <!-- Subtitle -->
+  <text x="290" y="135" text-anchor="start" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="16" fill="rgba(255,255,255,0.56)">Paste a YouTube URL, get a transcript and summarize with AI</text>
 
   <!-- Waveform bars: amber (download) → blue (transcribe) → green (done) -->
   <g transform="translate(180, 195)">
