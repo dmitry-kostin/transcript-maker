@@ -429,114 +429,22 @@ button:active:not(:disabled) {
   min-height: 1.4em;
 }
 
-/* ─── Transcript card ─── */
+/* ─── Active result slot ─── */
 
-.transcript-card {
+#active-result {
   margin-top: 28px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  opacity: 0;
-  transform: translateY(24px);
-  transition: opacity 600ms var(--ease-out-expo), transform 600ms var(--ease-out-expo);
+}
+
+#active-result:empty {
   display: none;
 }
 
-.transcript-card.show {
-  display: block;
-}
-
-.transcript-card.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.transcript-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.transcript-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.transcript-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: color 200ms ease, border-color 200ms ease, background 200ms ease;
-}
-
-.action-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.action-btn:hover {
-  color: var(--text);
+#active-result .history-card {
   border-color: var(--border-hover);
-  background: var(--surface-hover);
+  animation: card-slide-in 400ms var(--ease-out-expo) both;
 }
 
-.action-btn.copied {
-  color: var(--green);
-  border-color: var(--green-dim);
-}
-
-.transcript-body {
-  padding: 20px;
-  white-space: pre-wrap;
-  font-size: 0.9rem;
-  line-height: 1.75;
-  max-height: 480px;
-  overflow-y: auto;
-  color: var(--text);
-  -webkit-mask-image: linear-gradient(to bottom, #000 85%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 85%, transparent 100%);
-}
-
-/* Scrollbar */
-.transcript-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.transcript-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.transcript-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-.transcript-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* Remove fade mask when scrolled to bottom */
-.transcript-body.scrolled-bottom {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
+/* ─── Card actions ─── */
 
 /* ─── Error banner ─── */
 
@@ -623,14 +531,16 @@ button:active:not(:disabled) {
   transform: translateY(-1px);
 }
 
-/* Status dot */
+/* Status dot — inline in meta text */
 
 .history-card .status-dot {
-  width: 8px;
-  height: 8px;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  flex-shrink: 0;
   background: var(--text-dim);
+  vertical-align: middle;
+  margin-right: 9px;
 }
 
 .history-card .status-dot.done {
@@ -659,26 +569,70 @@ button:active:not(:disabled) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-left: 2px;
 }
 
 .history-card .card-meta {
   font-size: 0.78rem;
   color: var(--text-dim);
   margin-top: 1px;
+  padding-left: 2px;
 }
 
-/* Card actions */
+/* Quick copy — header-level, shown on hover, always visible when expanded */
+
+.history-card .quick-copy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0;
+  transition: opacity 200ms ease, color 200ms ease, border-color 200ms ease, align-self 200ms ease;
+}
+
+.history-card .quick-copy svg {
+  width: 12px;
+  height: 12px;
+}
+
+.history-card:hover .quick-copy {
+  opacity: 1;
+}
+
+.history-card .quick-copy:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.history-card.expanded .quick-copy {
+  opacity: 1;
+  align-self: flex-end;
+}
+
+/* Card actions — hidden by default, shown when expanded or error */
 
 .history-card .card-actions {
-  display: flex;
+  display: none;
+  flex-wrap: wrap;
   gap: 4px;
-  opacity: 0;
-  transition: opacity 200ms ease;
-  flex-shrink: 0;
+  margin-top: 6px;
 }
 
-.history-card:hover .card-actions {
-  opacity: 1;
+.history-card.expanded .card-actions {
+  display: flex;
+}
+
+.history-card[data-status="error"] .card-actions {
+  display: flex;
 }
 
 .history-card .card-actions button {
@@ -777,6 +731,26 @@ button:active:not(:disabled) {
   transform: translateX(-50%) translateY(0);
 }
 
+/* ─── Demo mode badge ─── */
+
+.demo-badge {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  padding: 4px 12px;
+  font-family: var(--font);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: var(--amber-dim);
+  border: 1px solid rgba(232, 165, 66, 0.2);
+  border-radius: 6px;
+  z-index: 200;
+  pointer-events: none;
+}
+
 /* ─── Keyframes ─── */
 
 @keyframes pulse {
@@ -805,10 +779,6 @@ button:active:not(:disabled) {
   }
 
   .hero {
-    transition: none;
-  }
-
-  .transcript-card {
     transition: none;
   }
 
@@ -861,17 +831,4 @@ button:active:not(:disabled) {
     margin-top: 2px;
   }
 
-  .transcript-body {
-    max-height: 320px;
-  }
-
-  .history-card .card-actions {
-    opacity: 1;
-  }
-}
-
-@media (hover: none) {
-  .history-card .card-actions {
-    opacity: 1;
-  }
 }

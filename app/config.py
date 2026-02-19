@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 
 class Settings(BaseSettings):
-    openai_api_key: str
+    openai_api_key: str = ""
     temp_dir: str = str(PROJECT_ROOT / "tmp")
     results_dir: str = str(PROJECT_ROOT / "results")
     max_chunk_size_mb: float = 24.0

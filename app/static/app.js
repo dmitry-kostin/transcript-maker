@@ -21,12 +21,8 @@ const cancelBtn = document.getElementById("cancel-btn");
 const progressEl = document.getElementById("progress");
 const waveformEl = document.getElementById("waveform");
 const progressStatus = document.getElementById("progress-status");
-const transcriptSection = document.getElementById("transcript-section");
-const transcriptTitle = document.getElementById("transcript-title");
-const transcriptEl = document.getElementById("transcript");
+const activeResultEl = document.getElementById("active-result");
 const errorEl = document.getElementById("error");
-const copyBtn = document.getElementById("copy-btn");
-const downloadBtn = document.getElementById("download-btn");
 const historyList = document.getElementById("history-list");
 const toastEl = document.getElementById("toast");
 const cleanupBtn = document.getElementById("cleanup-btn");
@@ -34,6 +30,8 @@ const cleanupBtn = document.getElementById("cleanup-btn");
 let abortController = null;
 let pollTimer = null;
 let lastHistoryIds = "";
+let activeRecordId = null;
+const bodyCache = new Map();
 
 // ─── SVG icons ───
 
@@ -41,6 +39,8 @@ const ICONS = {
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
 };
 
 // ─── Helpers ───
@@ -107,19 +107,11 @@ function setState(newState, data = {}) {
     errorEl.textContent = data.message;
   }
 
-  // Done — show transcript with delay for bloom
+  // Done — render active result card with delay for bloom
   if (newState === AppState.DONE && data.text) {
+    bodyCache.set(activeRecordId, data.text);
     setTimeout(() => {
-      transcriptEl.textContent = data.text;
-      if (data.title) {
-        transcriptTitle.textContent = data.title;
-      }
-      transcriptSection.classList.add("show");
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          transcriptSection.classList.add("visible");
-        });
-      });
+      renderActiveResult(data);
     }, 800);
   }
 }
@@ -128,9 +120,8 @@ function resetUI() {
   progressEl.hidden = true;
   progressStatus.textContent = "";
   waveformEl.className = "waveform stopped";
-  transcriptSection.classList.remove("show", "visible");
-  transcriptEl.textContent = "";
-  transcriptTitle.textContent = "Transcript";
+  activeResultEl.innerHTML = "";
+  activeRecordId = null;
   errorEl.hidden = true;
   errorEl.textContent = "";
 }
@@ -234,6 +225,110 @@ function showToast(msg) {
   }, 1500);
 }
 
+// ─── Unified card renderer ───
+
+function renderCard(record, opts = {}) {
+  const expanded = opts.expanded || false;
+  const date = record.created_at ? new Date(record.created_at + "Z").toLocaleDateString() : "";
+  const dur = formatDuration(record.duration);
+  const statusLabel = record.status === "in_progress" ? "in progress" : record.status;
+  const modelLabel = record.model === "gpt-4o-transcribe-diarize" ? "speakers" : "";
+  const wordsLabel = record.words ? `${record.words} words` : "";
+  const meta = [statusLabel, modelLabel, dur, wordsLabel, date].filter(Boolean).join(" \u00b7 ");
+
+  let actions = "";
+  let quickCopy = "";
+  if (record.status === "done") {
+    quickCopy = `<button class="quick-copy" onclick="event.stopPropagation(); copyRecordText('${record.id}')" title="Copy">${ICONS.copy} Copy</button>`;
+    actions = `
+      <button onclick="event.stopPropagation(); downloadRecordText('${record.id}', '${escapeHtml(record.title)}')" title="Download .txt">${ICONS.download} .txt</button>
+      <button onclick="event.stopPropagation(); revealInFinder('${record.id}')" title="Show in Finder">${ICONS.folder} Finder</button>
+      <button onclick="event.stopPropagation(); retranscribe('${record.id}')" title="Re-transcribe">${ICONS.refresh} Re-transcribe</button>
+      <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${record.id}')" title="Delete">${ICONS.trash} Delete</button>`;
+  } else if (record.status === "error") {
+    actions = `
+      <button onclick="event.stopPropagation(); retranscribe('${record.id}')" title="Retry">${ICONS.refresh} Retry</button>
+      <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${record.id}')" title="Delete">${ICONS.trash} Delete</button>`;
+  }
+
+  const expandable = record.status === "done" ? "expandable" : "";
+  const expandedClass = expanded ? "expanded" : "";
+
+  let bodyHtml = "";
+  if (expanded && opts.bodyText) {
+    bodyHtml = `<div class="card-body" onclick="event.stopPropagation()">${escapeHtml(opts.bodyText)}</div>`;
+  }
+
+  return `
+    <div class="history-card ${expandable} ${expandedClass}" data-id="${record.id}" data-status="${record.status}" onclick="handleCardClick(this)">
+      <div class="card-content">
+        <div class="card-title">${escapeHtml(record.title)}</div>
+        <div class="card-meta"><span class="status-dot ${record.status}"></span>${meta}${record.status === "error" && record.error ? " \u00b7 " + escapeHtml(record.error) : ""}</div>
+        ${actions ? `<div class="card-actions">${actions}</div>` : ""}
+      </div>
+      ${quickCopy}
+      ${bodyHtml}
+    </div>`;
+}
+
+// ─── Active result slot ───
+
+function renderActiveResult(data) {
+  if (!activeRecordId) return;
+
+  const text = data.text || "";
+  const record = {
+    id: activeRecordId,
+    title: data.title || "Transcript",
+    status: "done",
+    duration: data.duration_seconds || 0,
+    model: "",
+    words: text.split(/\s+/).filter(Boolean).length,
+    created_at: "",
+  };
+
+  activeResultEl.innerHTML = renderCard(record, {
+    expanded: true,
+    bodyText: data.text,
+  });
+
+  // Force history to re-render (filters out active record)
+  lastHistoryIds = "";
+  loadHistory();
+}
+
+// ─── New action functions ───
+
+async function copyRecordText(id) {
+  const text = await getRecordBody(id);
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  showToast("Copied to clipboard");
+}
+
+async function downloadRecordText(id, title) {
+  const text = await getRecordBody(id);
+  if (!text) return;
+  const blob = new Blob([text], { type: "text/plain" });
+  const a = document.createElement("a");
+  const objectUrl = URL.createObjectURL(blob);
+  a.href = objectUrl;
+  const filename = (title || "transcript").replace(/[^a-zA-Z0-9_\- ]/g, "").trim() || "transcript";
+  a.download = `${filename}.txt`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+}
+
+async function getRecordBody(id) {
+  if (bodyCache.has(id)) return bodyCache.get(id);
+  const res = await fetch(`/api/history/${id}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const body = data.body || "";
+  bodyCache.set(id, body);
+  return body;
+}
+
 // ─── Transcription ───
 
 async function runSSE(fetchUrl, fetchBody) {
@@ -300,14 +395,17 @@ async function runSSE(fetchUrl, fetchBody) {
   }
 }
 
+const DEMO_MODE = new URLSearchParams(window.location.search).has("demo");
+const apiPrefix = DEMO_MODE ? "/api/demo" : "/api";
+
 async function startTranscription(url) {
   const diarize = document.getElementById("diarize-toggle").checked;
-  runSSE("/api/transcribe", { url, model: diarize ? "gpt-4o-transcribe-diarize" : "" });
+  runSSE(`${apiPrefix}/transcribe`, { url, model: diarize ? "gpt-4o-transcribe-diarize" : "" });
 }
 
 function retranscribe(id) {
   const diarize = document.getElementById("diarize-toggle").checked;
-  runSSE(`/api/history/${id}/retranscribe`, { model: diarize ? "gpt-4o-transcribe-diarize" : "" });
+  runSSE(`${apiPrefix}/history/${id}/retranscribe`, { model: diarize ? "gpt-4o-transcribe-diarize" : "" });
 }
 
 function handleEvent(event, data) {
@@ -328,9 +426,11 @@ function handleEvent(event, data) {
       break;
 
     case "transcript":
+      activeRecordId = data.record_id || null;
       setState(AppState.DONE, {
         text: data.text,
         title: data.title || "Transcript",
+        duration_seconds: data.duration_seconds,
         message: "Done!",
       });
       break;
@@ -346,7 +446,7 @@ function handleEvent(event, data) {
 transcribeBtn.addEventListener("click", () => {
   const url = urlInput.value.trim();
   if (!url) return;
-  if (!isYouTubeUrl(url)) {
+  if (!DEMO_MODE && !isYouTubeUrl(url)) {
     resetUI();
     app.dataset.state = "active";
     errorEl.hidden = false;
@@ -370,39 +470,7 @@ urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") transcribeBtn.click();
 });
 
-copyBtn.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(transcriptEl.textContent);
-  copyBtn.classList.add("copied");
-  const label = copyBtn.querySelector("span");
-  const originalText = label.textContent;
-  label.textContent = "Copied!";
-  showToast("Copied to clipboard");
-  setTimeout(() => {
-    copyBtn.classList.remove("copied");
-    label.textContent = originalText;
-  }, 1500);
-});
-
-downloadBtn.addEventListener("click", () => {
-  const blob = new Blob([transcriptEl.textContent], { type: "text/plain" });
-  const a = document.createElement("a");
-  const objectUrl = URL.createObjectURL(blob);
-  a.href = objectUrl;
-  a.download = "transcript.txt";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
-});
-
-// Scroll fade mask for transcript body
-transcriptEl.addEventListener("scroll", () => {
-  const el = transcriptEl;
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
-  el.classList.toggle("scrolled-bottom", atBottom);
-});
-
 // ─── History ───
-
-const bodyCache = new Map();
 
 async function loadHistory() {
   try {
@@ -427,42 +495,21 @@ async function loadHistory() {
 }
 
 function renderHistory(records) {
-  if (!records.length) {
+  // Filter out the active result record
+  const filtered = activeRecordId
+    ? records.filter((r) => r.id !== activeRecordId)
+    : records;
+
+  if (!filtered.length) {
     historyList.innerHTML = '<p class="history-empty">No transcriptions yet.</p>';
     return;
   }
 
-  historyList.innerHTML = records
+  historyList.innerHTML = filtered
     .map((r, i) => {
-      const date = r.created_at ? new Date(r.created_at + "Z").toLocaleDateString() : "";
-      const dur = formatDuration(r.duration);
-      const statusLabel = r.status === "in_progress" ? "in progress" : r.status;
-      const modelLabel = r.model === "gpt-4o-transcribe-diarize" ? "speakers" : "";
-      const meta = [statusLabel, modelLabel, dur, date].filter(Boolean).join(" \u00b7 ");
-
-      let actions = "";
-      if (r.status === "done") {
-        actions = `
-          <button onclick="event.stopPropagation(); retranscribe('${r.id}')" title="Re-transcribe">${ICONS.refresh} Re-transcribe</button>
-          <button onclick="event.stopPropagation(); revealInFinder('${r.id}')" title="Show in Finder">${ICONS.folder} Finder</button>
-          <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
-      } else if (r.status === "error") {
-        actions = `
-          <button onclick="event.stopPropagation(); retranscribe('${r.id}')" title="Retry">${ICONS.refresh} Retry</button>
-          <button class="delete-btn" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete">${ICONS.trash}</button>`;
-      }
-
-      const expandable = r.status === "done" ? "expandable" : "";
-
-      return `
-        <div class="history-card ${expandable}" data-id="${r.id}" data-status="${r.status}" onclick="handleCardClick(this)" style="animation-delay: ${(i * 0.05).toFixed(2)}s">
-          <span class="status-dot ${r.status}"></span>
-          <div class="card-content">
-            <div class="card-title">${escapeHtml(r.title)}</div>
-            <div class="card-meta">${meta}${r.status === "error" && r.error ? " \u00b7 " + escapeHtml(r.error) : ""}</div>
-          </div>
-          <div class="card-actions">${actions}</div>
-        </div>`;
+      const html = renderCard(r);
+      // Inject animation delay
+      return html.replace('onclick="handleCardClick(this)"', `onclick="handleCardClick(this)" style="animation-delay: ${(i * 0.05).toFixed(2)}s"`);
     })
     .join("");
 }
@@ -475,24 +522,22 @@ async function handleCardClick(cardEl) {
 
 async function toggleCardBody(id, cardEl) {
   const existing = cardEl.querySelector(".card-body");
+  const top = cardEl.getBoundingClientRect().top;
   if (existing) {
     existing.remove();
     cardEl.classList.remove("expanded");
-    return;
+  } else {
+    const body = await getRecordBody(id);
+    if (!body) return;
+    const div = document.createElement("div");
+    div.className = "card-body";
+    div.textContent = body;
+    div.addEventListener("click", (e) => e.stopPropagation());
+    cardEl.appendChild(div);
+    cardEl.classList.add("expanded");
   }
-  if (!bodyCache.has(id)) {
-    const res = await fetch(`/api/history/${id}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    bodyCache.set(id, data.body || "");
-  }
-  const body = bodyCache.get(id);
-  if (!body) return;
-  const div = document.createElement("div");
-  div.className = "card-body";
-  div.textContent = body;
-  cardEl.appendChild(div);
-  cardEl.classList.add("expanded");
+  const shift = cardEl.getBoundingClientRect().top - top;
+  if (shift) window.scrollBy(0, shift);
 }
 
 async function revealInFinder(id) {
@@ -502,6 +547,11 @@ async function revealInFinder(id) {
 async function deleteRecord(id) {
   const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
   if (res.ok) {
+    // If deleting the active result, clear it
+    if (id === activeRecordId) {
+      activeResultEl.innerHTML = "";
+      activeRecordId = null;
+    }
     lastHistoryIds = "";
     loadHistory();
   }
@@ -538,6 +588,13 @@ cleanupBtn.addEventListener("click", async () => {
 });
 
 // ─── Init ───
+
+if (DEMO_MODE) {
+  const badge = document.createElement("div");
+  badge.className = "demo-badge";
+  badge.textContent = "Demo Mode";
+  document.body.appendChild(badge);
+}
 
 initWaveform();
 loadHistory();

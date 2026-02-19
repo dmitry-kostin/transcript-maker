@@ -7,8 +7,15 @@
 - `poetry run pytest tests/test_history.py -v` — run a specific test module
 
 ## Environment
-- Requires `TM_OPENAI_API_KEY` env var or `.env` file
+- Requires `TM_OPENAI_API_KEY` env var or `.env` file (not needed for demo mode)
 - Tests set a dummy key in `conftest.py` — no real key needed for unit tests
+
+## Demo Mode
+- Open `http://localhost:8000?demo` — frontend routes requests to `/api/demo/` endpoints
+- Simulates 10s download + 10s transcription with fake transcript text, no real APIs called
+- 50% chance of multi-chunk mode (2–6 chunks) to test chunk progress UI
+- URL validation is skipped — type anything in the input field
+- History records are real (written to `results/`), retranscribe works too
 
 ## Architecture
 - FastAPI app with SSE-based transcription pipeline: download → chunk → whisper API → save
