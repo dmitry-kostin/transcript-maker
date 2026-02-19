@@ -14,8 +14,7 @@
 
 ---
 
-<!-- Screenshot: replace with your own when ready -->
-<img width="750" height="585" alt="image" src="https://github.com/user-attachments/assets/55d2b77a-7b97-447b-94bc-fd1cc2318fe9" />
+<img width="788" height="555" alt="image" src="https://github.com/user-attachments/assets/a92752ee-fc64-4d5b-9f2a-35847deac464" />
 
 ## Features
 
