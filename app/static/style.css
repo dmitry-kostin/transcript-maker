@@ -1,0 +1,264 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #f8f9fa;
+  color: #1a1a1a;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+main {
+  width: 100%;
+  max-width: 640px;
+}
+
+h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: #666;
+  margin-top: 4px;
+  margin-bottom: 32px;
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+}
+
+input[type="url"] {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  border: 1.5px solid #d0d5dd;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+input[type="url"]:focus {
+  border-color: #2563eb;
+}
+
+button {
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+#transcribe-btn {
+  background: #2563eb;
+  color: #fff;
+}
+
+#transcribe-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+#transcribe-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#cancel-btn {
+  background: #ef4444;
+  color: #fff;
+}
+
+#cancel-btn:hover {
+  background: #dc2626;
+}
+
+.progress {
+  margin-top: 24px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.progress ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress li {
+  font-size: 0.875rem;
+  color: #444;
+}
+
+.progress li::before {
+  content: ">";
+  margin-right: 8px;
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.transcript {
+  margin-top: 24px;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 0.925rem;
+  line-height: 1.7;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.actions button {
+  background: #fff;
+  color: #1a1a1a;
+  border: 1.5px solid #d0d5dd;
+  font-weight: 500;
+}
+
+.actions button:hover {
+  background: #f3f4f6;
+}
+
+.error {
+  margin-top: 24px;
+  padding: 14px 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #b91c1c;
+  font-size: 0.9rem;
+}
+
+/* History */
+
+.history-section {
+  margin-top: 48px;
+}
+
+.history-section h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-empty {
+  color: #999;
+  font-size: 0.9rem;
+}
+
+.history-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.history-card .info {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-card .title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-card .meta {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 2px;
+}
+
+.history-card .card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.history-card .card-actions button {
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+}
+
+.history-card .card-actions button:hover {
+  background: #f3f4f6;
+}
+
+.history-card .card-actions button.delete-btn:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.badge-done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-in_progress {
+  background: #dbeafe;
+  color: #1e40af;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.badge-error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

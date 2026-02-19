@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transcript Maker</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>Transcript Maker</h1>
+    <p class="subtitle">Paste a YouTube URL and get a transcript</p>
+
+    <div class="input-row">
+      <input type="url" id="url-input" placeholder="https://www.youtube.com/watch?v=..." autofocus>
+      <button id="transcribe-btn">Transcribe</button>
+      <button id="cancel-btn" hidden>Cancel</button>
+    </div>
+
+    <div id="progress" class="progress" hidden>
+      <ul id="progress-log"></ul>
+    </div>
+
+    <div id="transcript-section" hidden>
+      <div id="transcript" class="transcript"></div>
+      <div class="actions">
+        <button id="copy-btn">Copy to Clipboard</button>
+        <button id="download-btn">Download .txt</button>
+      </div>
+    </div>
+
+    <div id="error" class="error" hidden></div>
+
+    <section id="history-section" class="history-section">
+      <h2>History</h2>
+      <div id="history-list" class="history-list">
+        <p class="history-empty">No transcriptions yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
