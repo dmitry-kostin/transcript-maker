@@ -14,6 +14,8 @@
 
 ---
 
+# Transcript Maker – Watch Videos Faster Reading Them
+
 <img width="754" height="944" alt="image" src="https://github.com/user-attachments/assets/39fd8b3f-148d-4e0b-8be4-71f1b63f14f1" />
 
 
