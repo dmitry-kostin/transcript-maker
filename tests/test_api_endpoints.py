@@ -70,3 +70,11 @@ class TestTranscribeEndpoint:
     def test_transcribe_empty_url(self, client):
         res = client.post("/api/transcribe", json={"url": ""})
         assert res.status_code == 422
+
+    def test_transcribe_rejects_playlist_url(self, client):
+        res = client.post("/api/transcribe", json={"url": "https://www.youtube.com/playlist?list=PLtxgRxNe7rCz"})
+        assert res.status_code == 422
+
+    def test_transcribe_rejects_list_without_video(self, client):
+        res = client.post("/api/transcribe", json={"url": "https://www.youtube.com/watch?list=PLtxgRxNe7rCz"})
+        assert res.status_code == 422

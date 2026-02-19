@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -39,6 +39,14 @@ class TranscribeRequest(BaseModel):
         parsed = urlparse(v)
         if parsed.hostname not in ALLOWED_HOSTS:
             raise ValueError("URL must be a YouTube link")
+        qs = parse_qs(parsed.query)
+        has_video_id = "v" in qs or (
+            parsed.hostname == "youtu.be" and len(parsed.path) > 1
+        )
+        if parsed.path == "/playlist" or ("list" in qs and not has_video_id):
+            raise ValueError(
+                "Playlist URLs are not supported. Please provide a single video URL."
+            )
         return v
 
 

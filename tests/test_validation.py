@@ -46,3 +46,23 @@ class TestTranscribeRequestValidation:
     def test_rejects_non_url(self):
         with pytest.raises(ValidationError):
             TranscribeRequest(url="not a url at all")
+
+    def test_rejects_playlist_path(self):
+        with pytest.raises(ValidationError, match="Playlist URLs are not supported"):
+            TranscribeRequest(url="https://www.youtube.com/playlist?list=PLtxgRxNe7rCz")
+
+    def test_rejects_list_param_without_video(self):
+        with pytest.raises(ValidationError, match="Playlist URLs are not supported"):
+            TranscribeRequest(url="https://www.youtube.com/watch?list=PLtxgRxNe7rCz")
+
+    def test_allows_video_with_list_param(self):
+        req = TranscribeRequest(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLtxgRxNe7rCz")
+        assert "v=dQw4w9WgXcQ" in req.url
+
+    def test_allows_video_with_list_and_index(self):
+        req = TranscribeRequest(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLtxgRxNe7rCz&index=5")
+        assert "v=dQw4w9WgXcQ" in req.url
+
+    def test_allows_youtu_be_with_list_param(self):
+        req = TranscribeRequest(url="https://youtu.be/dQw4w9WgXcQ?list=PLtxgRxNe7rCz")
+        assert "youtu.be" in req.url

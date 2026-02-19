@@ -5,7 +5,7 @@ These tests require:
 - A valid TM_OPENAI_API_KEY in .env
 - ffmpeg installed
 
-Run with: poetry run pytest tests/test_integration.py -v
+Run with: poetry run pytest -m integration -v
 """
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
 TEST_VIDEO_URL = "https://www.youtube.com/watch?v=qlkReiRGWpI"
 
 
+@pytest.mark.integration
 class TestIntegration:
     @pytest.mark.asyncio
     async def test_download_returns_valid_audio(self, tmp_path, monkeypatch):
