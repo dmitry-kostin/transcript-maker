@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     results_dir: str = str(PROJECT_ROOT / "results")
     max_chunk_size_mb: float = 24.0
     audio_format: str = "mp3"
+    summarize_model: str = "gpt-4o"
 
     model_config = {"env_prefix": "TM_", "env_file": ".env"}
 

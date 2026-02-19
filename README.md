@@ -1,22 +1,35 @@
-# Transcript Maker
+<p align="center">
+  <img src="docs/banner.svg" alt="Transcript Maker" width="100%">
+</p>
 
-Paste a YouTube URL, get a transcript. A single-page web app that downloads audio from YouTube and transcribes it using OpenAI Whisper.
+<p align="center">
+  Paste a YouTube URL, get a transcript and summarize with AI.
+</p>
 
+<p align="center">
+  <a href="https://github.com/dmitry-kostin/transcript-maker/actions/workflows/tests.yml"><img src="https://github.com/dmitry-kostin/transcript-maker/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white" alt="Python 3.11+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e8a542" alt="License MIT"></a>
+</p>
+
+---
+
+<!-- Screenshot: replace with your own when ready -->
 <img width="750" height="585" alt="image" src="https://github.com/user-attachments/assets/55d2b77a-7b97-447b-94bc-fd1cc2318fe9" />
-
 
 ## Features
 
 - **YouTube audio download** via yt-dlp (any public YouTube video up to 4 hours)
 - **OpenAI Whisper transcription** with automatic language detection
 - **Speaker detection** — optional diarization with speaker labels (`gpt-4o-transcribe-diarize`)
+- **AI summarization** — generate summaries via OpenAI Chat API, stored as sidecar files
 - **Re-transcribe** — re-run any completed or failed transcription, optionally switching models
 - **Expandable history** — click any completed transcript to preview the text inline
 - **Real-time progress** streamed to the browser via Server-Sent Events
 - **Cancel** an in-progress transcription from the UI
 - **History** with status tracking — persists across page refreshes and server restarts
 - **Show in Finder** — reveal any saved transcript file on disk
-- **Copy / Download** — copy transcript to clipboard or save as `.txt`
+- **Copy / Download** — tab-aware copy (transcript or summary) to clipboard, or save as `.txt`
 - **Markdown-based storage** — each transcript is a `.md` file, no database
 - **Playlist rejection** — only single video URLs accepted
 
@@ -25,54 +38,19 @@ Paste a YouTube URL, get a transcript. A single-page web app that downloads audi
 - Python 3.11+, FastAPI, uvicorn
 - yt-dlp (YouTube download)
 - OpenAI Whisper API (transcription)
+- OpenAI Chat API (summarization)
 - ffmpeg / ffprobe (audio chunking)
 - pydantic-settings (configuration)
 - sse-starlette (SSE streaming)
 - Vanilla HTML / CSS / JS (no build step)
 
-## Project Structure
+## Quick Start
 
-```
-transcript-maker/
-├── pyproject.toml          # Poetry deps & metadata
-├── run.py                  # Single-script launcher (uvicorn)
-├── .env.example            # Template for API key
-├── .gitignore
-├── app/
-│   ├── __init__.py
-│   ├── main.py             # FastAPI app factory + static mount
-│   ├── config.py           # pydantic-settings (env vars)
-│   ├── api.py              # API routes (transcribe + history endpoints)
-│   ├── downloader.py       # yt-dlp: download + extract audio
-│   ├── transcriber.py      # ffmpeg chunking + OpenAI Whisper API
-│   ├── history.py          # Persistence layer (markdown files)
-│   └── static/
-│       ├── index.html
-│       ├── style.css
-│       └── app.js
-├── tests/
-│   ├── conftest.py         # Shared fixtures
-│   ├── test_history.py     # History module tests
-│   ├── test_downloader.py  # Downloader unit tests (mocked yt-dlp)
-│   ├── test_transcriber.py # Transcriber unit tests (mocked ffmpeg)
-│   ├── test_validation.py  # URL validation tests
-│   ├── test_api_endpoints.py # API endpoint tests (TestClient)
-│   └── test_integration.py # End-to-end tests (real APIs)
-├── tmp/                    # Runtime temp files (gitignored)
-└── results/                # Saved transcripts as .md files (gitignored)
-```
-
-## Prerequisites
-
-- **Python 3.11+**
-- **Poetry** — [install instructions](https://python-poetry.org/docs/#installation)
-- **ffmpeg** — `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Linux)
-- **OpenAI API key** — with access to the Whisper model
-
-## Setup & Launch
+**Prerequisites:** Python 3.11+, [Poetry](https://python-poetry.org/docs/#installation), [ffmpeg](https://ffmpeg.org/) (`brew install ffmpeg` / `apt install ffmpeg`), and an [OpenAI API key](https://platform.openai.com/api-keys).
 
 ```bash
-# Install dependencies
+git clone https://github.com/dmitry-kostin/transcript-maker.git
+cd transcript-maker
 poetry install
 
 # Configure API key (pick one)
@@ -106,6 +84,40 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `TM_RESULTS_DIR` | `./results` | Directory for saved transcript `.md` files |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
+| `TM_SUMMARIZE_MODEL` | `gpt-4o` | OpenAI model for AI summarization |
+
+## Project Structure
+
+```
+transcript-maker/
+├── pyproject.toml          # Poetry deps & metadata
+├── run.py                  # Single-script launcher (uvicorn)
+├── .env.example            # Template for API key
+├── .gitignore
+├── app/
+│   ├── __init__.py
+│   ├── main.py             # FastAPI app factory + static mount
+│   ├── config.py           # pydantic-settings (env vars)
+│   ├── api.py              # API routes (transcribe + history endpoints)
+│   ├── downloader.py       # yt-dlp: download + extract audio
+│   ├── transcriber.py      # ffmpeg chunking + OpenAI Whisper API
+│   ├── summarizer.py       # OpenAI Chat Completions for summarization
+│   ├── history.py          # Persistence layer (markdown files)
+│   └── static/
+│       ├── index.html
+│       ├── style.css
+│       └── app.js
+├── tests/
+│   ├── conftest.py         # Shared fixtures
+│   ├── test_history.py     # History module tests
+│   ├── test_downloader.py  # Downloader unit tests (mocked yt-dlp)
+│   ├── test_transcriber.py # Transcriber unit tests (mocked ffmpeg)
+│   ├── test_validation.py  # URL validation tests
+│   ├── test_api_endpoints.py # API endpoint tests (TestClient)
+│   └── test_integration.py # End-to-end tests (real APIs)
+├── tmp/                    # Runtime temp files (gitignored)
+└── results/                # Saved transcripts as .md files (gitignored)
+```
 
 ## API Reference
 
@@ -120,8 +132,11 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `POST` | `/api/history/{id}/reveal` | Open Finder with the transcript file selected |
 | `DELETE` | `/api/history/{id}` | Delete a saved transcript |
 | `POST` | `/api/cleanup` | Clean up temp files and stale records |
+| `POST` | `/api/history/{id}/summarize` | Generate AI summary for a transcript |
+| `GET` | `/api/history/{id}/summary` | Get stored summary for a transcript |
 | `POST` | `/api/demo/transcribe` | Demo: simulated transcription (SSE stream) |
 | `POST` | `/api/demo/history/{id}/retranscribe` | Demo: simulated re-transcription (SSE stream) |
+| `POST` | `/api/demo/history/{id}/summarize` | Demo: simulated summarization |
 
 ### POST /api/transcribe
 
@@ -157,6 +172,42 @@ Re-transcribes an existing record using its stored URL. Returns an SSE stream id
 
 Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
 
+### POST /api/history/{id}/summarize
+
+Generate an AI summary for a completed transcript.
+
+**Request:**
+```json
+{ "prompt": "Summarize the key points" }
+```
+
+- `prompt` — Custom summarization prompt (optional, empty string uses default prompt)
+
+**Response:**
+```json
+{
+  "summary": "Video Title\n\nGenerated summary text...",
+  "prompt": "Summarize the key points"
+}
+```
+
+Returns 400 for invalid ID or incomplete record, 404 if not found, 500 if summarization fails.
+
+### GET /api/history/{id}/summary
+
+Retrieve a previously generated summary.
+
+**Response:**
+```json
+{
+  "summary": "Video Title\n\nSummary text...",
+  "prompt": "Summarize the key points",
+  "created_at": "2026-02-19T10:35:00"
+}
+```
+
+Returns 400 for invalid ID, 404 if no summary exists.
+
 ### GET /api/history
 
 **Response:**
@@ -169,8 +220,10 @@ Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in
     "status": "done",
     "duration": 213,
     "model": "gpt-4o-transcribe-diarize",
+    "words": 1842,
     "created_at": "2026-02-19T10:30:00",
-    "error": ""
+    "error": "",
+    "has_summary": true
   }
 ]
 ```
@@ -207,10 +260,17 @@ created_at: "2026-02-19T10:30:00"
 error: ""
 ---
 
+Video Title
 Full transcript text here...
 ```
 
+Video title is prepended as the first line of both the transcript body and summary body.
+
 **Filename format:** `{slugified-title}_{8-hex-id}.md`
+
+**Summary sidecar:** `{record_id}_summary.md` — stores AI-generated summary with YAML frontmatter (`prompt`, `created_at`) and summary text as body. Deleted automatically when the parent record is deleted.
+
+**Audio cache:** `{record_id}.mp3` — cached audio file, reused by retranscribe. Deleted automatically when the parent record is deleted.
 
 **Status lifecycle:** `in_progress` → `done` | `error`
 
@@ -237,3 +297,15 @@ Integration tests use a short YouTube video and are skipped automatically when n
 - **Show in Finder** — record ID validated as exactly 8 hex chars; file path resolved by scanning `results/` (never from user input); path traversal guard checks resolved parent matches `results/`; `open -R` is read-only
 - **No shell injection** — all subprocess calls use list arguments, never shell strings
 - **Temp file isolation** — UUID suffixes prevent filename collisions between concurrent requests
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Make your changes and add tests
+4. Run `poetry run pytest -v` to verify
+5. Open a pull request
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

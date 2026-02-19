@@ -32,6 +32,7 @@ let pollTimer = null;
 let lastHistoryIds = "";
 let activeRecordId = null;
 const bodyCache = new Map();
+const summaryCache = new Map();
 
 // ─── SVG icons ───
 
@@ -41,6 +42,7 @@ const ICONS = {
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  sparkle: '🦄',
 };
 
 // ─── Helpers ───
@@ -238,7 +240,10 @@ function renderCard(record, opts = {}) {
 
   let actions = "";
   let quickCopy = "";
+  let quickSummarize = "";
   if (record.status === "done") {
+    const summarizeTitle = record.has_summary ? "Re-summarize" : "Summarize";
+    quickSummarize = `<button class="quick-summarize${record.has_summary ? " has-summary" : ""}" onclick="event.stopPropagation(); openSummarizePrompt('${record.id}')" title="${summarizeTitle}"><span class="unicorn-icon">${ICONS.sparkle}</span> Magic</button>`;
     quickCopy = `<button class="quick-copy" onclick="event.stopPropagation(); copyRecordText('${record.id}')" title="Copy">${ICONS.copy} Copy</button>`;
     actions = `
       <button onclick="event.stopPropagation(); downloadRecordText('${record.id}', '${escapeHtml(record.title)}')" title="Download .txt">${ICONS.download} .txt</button>
@@ -259,14 +264,16 @@ function renderCard(record, opts = {}) {
     bodyHtml = `<div class="card-body" onclick="event.stopPropagation()">${escapeHtml(opts.bodyText)}</div>`;
   }
 
+  const hasSummary = record.has_summary ? "true" : "false";
+
   return `
-    <div class="history-card ${expandable} ${expandedClass}" data-id="${record.id}" data-status="${record.status}" onclick="handleCardClick(this)">
+    <div class="history-card ${expandable} ${expandedClass}" data-id="${record.id}" data-status="${record.status}" data-has-summary="${hasSummary}" onclick="handleCardClick(this)">
       <div class="card-content">
         <div class="card-title">${escapeHtml(record.title)}</div>
         <div class="card-meta"><span class="status-dot ${record.status}"></span>${meta}${record.status === "error" && record.error ? " \u00b7 " + escapeHtml(record.error) : ""}</div>
         ${actions ? `<div class="card-actions">${actions}</div>` : ""}
       </div>
-      ${quickCopy}
+      ${quickCopy}${quickSummarize}
       ${bodyHtml}
     </div>`;
 }
@@ -300,10 +307,21 @@ function renderActiveResult(data) {
 // ─── New action functions ───
 
 async function copyRecordText(id) {
-  const text = await getRecordBody(id);
-  if (!text) return;
-  await navigator.clipboard.writeText(text);
-  showToast("Copied to clipboard");
+  const card = document.querySelector(`.history-card[data-id="${id}"]`);
+  const activeTab = card?.querySelector(".card-tab.active");
+  const isSummary = activeTab?.dataset.tab === "summary";
+
+  if (isSummary) {
+    const data = await getRecordSummary(id);
+    if (!data?.summary) return;
+    await navigator.clipboard.writeText(data.summary);
+    showToast("Summary copied");
+  } else {
+    const text = await getRecordBody(id);
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    showToast("Transcript copied");
+  }
 }
 
 async function downloadRecordText(id, title) {
@@ -482,6 +500,7 @@ async function loadHistory() {
     if (currentIds !== lastHistoryIds) {
       lastHistoryIds = currentIds;
       bodyCache.clear();
+      summaryCache.clear();
       renderHistory(records);
     }
 
@@ -521,23 +540,208 @@ async function handleCardClick(cardEl) {
 }
 
 async function toggleCardBody(id, cardEl) {
-  const existing = cardEl.querySelector(".card-body");
+  const existing = cardEl.querySelector(".card-body, .card-tabs, .card-summary, .summarize-prompt");
   const top = cardEl.getBoundingClientRect().top;
   if (existing) {
-    existing.remove();
+    // Collapse — remove all expanded elements
+    cardEl.querySelectorAll(".card-body, .card-tabs, .card-summary, .summarize-prompt").forEach(el => el.remove());
     cardEl.classList.remove("expanded");
   } else {
     const body = await getRecordBody(id);
     if (!body) return;
-    const div = document.createElement("div");
-    div.className = "card-body";
-    div.textContent = body;
-    div.addEventListener("click", (e) => e.stopPropagation());
-    cardEl.appendChild(div);
+
+    const hasSummary = cardEl.dataset.hasSummary === "true";
+    let summaryData = null;
+    if (hasSummary) {
+      summaryData = await getRecordSummary(id);
+    }
+
+    // Build tab bar + content
+    if (summaryData) {
+      const tabBar = buildTabBar(id, "summary");
+      tabBar.addEventListener("click", (e) => e.stopPropagation());
+      cardEl.appendChild(tabBar);
+
+      const bodyDiv = document.createElement("div");
+      bodyDiv.className = "card-body";
+      bodyDiv.style.display = "none";
+      bodyDiv.textContent = body;
+      bodyDiv.addEventListener("click", (e) => e.stopPropagation());
+      cardEl.appendChild(bodyDiv);
+
+      const summaryDiv = buildSummaryDiv(summaryData.summary);
+      cardEl.appendChild(summaryDiv);
+    } else {
+      const div = document.createElement("div");
+      div.className = "card-body";
+      div.textContent = body;
+      div.addEventListener("click", (e) => e.stopPropagation());
+      cardEl.appendChild(div);
+    }
+
     cardEl.classList.add("expanded");
   }
   const shift = cardEl.getBoundingClientRect().top - top;
   if (shift) window.scrollBy(0, shift);
+}
+
+function buildTabBar(id, activeTab) {
+  const bar = document.createElement("div");
+  bar.className = "card-tabs";
+  bar.innerHTML = `
+    <button class="card-tab ${activeTab === "transcript" ? "active" : ""}" data-tab="transcript">Transcript</button>
+    <button class="card-tab ${activeTab === "summary" ? "active" : ""}" data-tab="summary">Summary</button>
+  `;
+  bar.addEventListener("click", (e) => {
+    const tab = e.target.closest(".card-tab");
+    if (!tab) return;
+    const card = bar.closest(".history-card");
+    const tabName = tab.dataset.tab;
+    // Toggle active state
+    bar.querySelectorAll(".card-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    // Show/hide content
+    const bodyEl = card.querySelector(".card-body");
+    const summaryEl = card.querySelector(".card-summary");
+    if (bodyEl) bodyEl.style.display = tabName === "transcript" ? "" : "none";
+    if (summaryEl) summaryEl.style.display = tabName === "summary" ? "" : "none";
+  });
+  return bar;
+}
+
+function buildSummaryDiv(summaryText) {
+  const div = document.createElement("div");
+  div.className = "card-summary";
+  div.addEventListener("click", (e) => e.stopPropagation());
+  div.innerHTML = `<div class="card-summary-text">${escapeHtml(summaryText)}</div>`;
+  return div;
+}
+
+async function getRecordSummary(id) {
+  if (summaryCache.has(id)) return summaryCache.get(id);
+  const res = await fetch(`/api/history/${id}/summary`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  summaryCache.set(id, data);
+  return data;
+}
+
+function openSummarizePrompt(id) {
+  const card = document.querySelector(`.history-card[data-id="${id}"]`);
+  if (!card) return;
+
+  // If prompt already open, close it
+  const existing = card.querySelector(".summarize-prompt");
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  // Ensure card is expanded
+  if (!card.classList.contains("expanded")) {
+    handleCardClick(card).then(() => addPromptUI(id, card));
+    return;
+  }
+  addPromptUI(id, card);
+}
+
+function addPromptUI(id, card) {
+  // Remove any existing prompt
+  const existing = card.querySelector(".summarize-prompt");
+  if (existing) existing.remove();
+
+  const prompt = document.createElement("div");
+  prompt.className = "summarize-prompt";
+  prompt.addEventListener("click", (e) => e.stopPropagation());
+  prompt.innerHTML = `
+    <div class="summarize-bar">
+      <textarea class="summarize-input" rows="2">Summarize this transcript concisely, highlighting key points and main topics discussed.</textarea>
+      <div class="summarize-bar-actions">
+        <button class="summarize-generate-btn" onclick="generateSummary('${id}')">
+          <span>Generate</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+        <button class="summarize-cancel-btn" onclick="this.closest('.summarize-prompt').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  // Insert after card-actions or at end of card-content
+  const actions = card.querySelector(".card-actions");
+  if (actions) {
+    actions.after(prompt);
+  } else {
+    const content = card.querySelector(".card-content");
+    content.after(prompt);
+  }
+}
+
+async function generateSummary(id) {
+  const card = document.querySelector(`.history-card[data-id="${id}"]`);
+  if (!card) return;
+
+  const textarea = card.querySelector(".summarize-input");
+  const btn = card.querySelector(".summarize-generate-btn");
+  const promptText = textarea ? textarea.value.trim() : "";
+
+  btn.disabled = true;
+  btn.textContent = "Generating...";
+
+  try {
+    const res = await fetch(`${apiPrefix}/history/${id}/summarize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: promptText }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Summarization failed");
+    }
+
+    const data = await res.json();
+    summaryCache.set(id, data);
+    card.dataset.hasSummary = "true";
+
+    // Remove prompt UI
+    const promptEl = card.querySelector(".summarize-prompt");
+    if (promptEl) promptEl.remove();
+
+    // Mark the quick-summarize button as having a summary
+    const sumBtn = card.querySelector(".quick-summarize");
+    if (sumBtn) sumBtn.classList.add("has-summary");
+
+    // Rebuild tab bar and summary display
+    const oldTabs = card.querySelector(".card-tabs");
+    const oldSummary = card.querySelector(".card-summary");
+    const oldBody = card.querySelector(".card-body");
+
+    if (oldTabs) oldTabs.remove();
+    if (oldSummary) oldSummary.remove();
+
+    // Add tabs if not present
+    const tabBar = buildTabBar(id, "summary");
+    tabBar.addEventListener("click", (e) => e.stopPropagation());
+    if (oldBody) {
+      oldBody.before(tabBar);
+      oldBody.style.display = "none";
+    } else {
+      card.appendChild(tabBar);
+    }
+
+    const summaryDiv = buildSummaryDiv(data.summary);
+    if (oldBody) {
+      oldBody.after(summaryDiv);
+    } else {
+      card.appendChild(summaryDiv);
+    }
+
+    showToast("Summary generated");
+  } catch (err) {
+    showToast(err.message);
+    btn.disabled = false;
+    btn.textContent = "Generate";
+  }
 }
 
 async function revealInFinder(id) {

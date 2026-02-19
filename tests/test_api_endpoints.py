@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.history import create_record, complete_record, RESULTS_DIR
+from app.history import create_record, complete_record, get_summary, RESULTS_DIR
 from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS
 import app.history as history_mod
 
@@ -123,6 +123,68 @@ class TestRetranscribeEndpoint:
         # Record is in_progress by default
         res = client.post(f"/api/history/{rid}/retranscribe", json={"model": ""})
         assert res.status_code == 409
+
+
+class TestSummarizeEndpoint:
+    def test_invalid_id(self, client):
+        res = client.post("/api/history/ZZZZZZZZ/summarize", json={"prompt": ""})
+        assert res.status_code == 400
+
+    def test_not_done_record(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+        assert res.status_code == 400
+
+    def test_successful_summarize(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "This is a test transcript with multiple words.")
+        with patch("app.api.summarize_text", return_value="Mocked summary"):
+            res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["summary"] == "Test\n\nMocked summary"
+        # Verify it was saved
+        saved = get_summary(rid)
+        assert saved is not None
+        assert saved["summary"] == "Test\n\nMocked summary"
+
+    def test_get_summary(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Transcript text")
+        with patch("app.api.summarize_text", return_value="The summary"):
+            client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+        res = client.get(f"/api/history/{rid}/summary")
+        assert res.status_code == 200
+        assert res.json()["summary"] == "Test\n\nThe summary"
+
+    def test_get_summary_404(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Text")
+        res = client.get(f"/api/history/{rid}/summary")
+        assert res.status_code == 404
+
+    def test_demo_summarize(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Transcript text")
+        res = client.post(f"/api/demo/history/{rid}/summarize", json={"prompt": ""})
+        assert res.status_code == 200
+        data = res.json()
+        assert "Key Points" in data["summary"]
 
 
 class TestPrepareChunks:

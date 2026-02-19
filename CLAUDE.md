@@ -8,6 +8,7 @@
 
 ## Environment
 - Requires `TM_OPENAI_API_KEY` env var or `.env` file (not needed for demo mode)
+- `TM_SUMMARIZE_MODEL` env var (default: `gpt-4o`) — model used for AI summarization
 - Tests set a dummy key in `conftest.py` — no real key needed for unit tests
 
 ## Demo Mode
@@ -20,6 +21,7 @@
 ## Architecture
 - FastAPI app with SSE-based transcription pipeline: download → chunk → whisper API → save
 - History stored as markdown files with YAML frontmatter in `results/` — no database
+- AI summarization via OpenAI Chat API — summaries stored as sidecar files `results/{record_id}_summary.md`
 - Frontend is vanilla HTML/CSS/JS in `app/static/` — no build step
 
 ## Key Patterns
@@ -29,6 +31,9 @@
 - `complete_record()` / `fail_record()` rebuild the full YAML meta dict from parsed record — always include all fields
 - `_write_md()` uses `sort_keys=False` to preserve frontmatter key order
 - Audio cached in `results/{record_id}.mp3` after download — reused by retranscribe, deleted with record
+- Summary sidecar: `results/{record_id}_summary.md` with YAML frontmatter (prompt, created_at) + body
+- `delete_record()` cascades to delete summary sidecar + audio cache
+- Video title prepended as first line of transcript and summary body in `api.py` (all codepaths: transcribe, demo, retranscribe, summarize, demo summarize)
 
 ## Two Whisper Models
 - `gpt-4o-transcribe` (default) — plain text output
@@ -48,6 +53,16 @@
 - Test classes group related tests (e.g. `TestLifecycle`, `TestEdgeCases`)
 - Mock external deps (yt-dlp, ffmpeg, OpenAI) in unit tests
 - Integration tests marked with `@pytest.mark.integration`
+
+## Summarize Feature
+- Summarize button appears on completed transcript cards (expands card if collapsed)
+- User can enter a custom prompt or use the default
+- Summary stored as `results/{record_id}_summary.md` with YAML frontmatter (prompt, created_at)
+- Video title prepended as first line of both transcript body and summary body
+- Expanded cards show Transcript/Summary tab toggle when a summary exists
+- Copy button copies based on active tab (transcript or summary), toast says "Transcript copied" / "Summary copied"
+- Demo mode: simulated 2s delay, canned summary text
+- Endpoints: `POST /api/history/{id}/summarize`, `GET /api/history/{id}/summary`
 
 ## Gotchas
 - `_parse_md()` coerces all YAML values to strings (line 57) except duration (explicitly int)
