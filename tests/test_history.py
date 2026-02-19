@@ -2,8 +2,10 @@ from pathlib import Path
 from app.history import (
     _slugify, _write_md, _parse_md,
     create_record, complete_record, fail_record,
-    get_history, delete_record, get_result_path,
+    get_history, get_record, reset_record,
+    delete_record, get_result_path,
     cleanup_stale_records,
+    save_audio, get_audio_path,
 )
 
 
@@ -161,3 +163,111 @@ class TestEdgeCases:
         assert status_map["Stale 1"] == "error"
         assert status_map["Stale 2"] == "error"
         assert status_map["Done One"] == "done"
+
+
+class TestGetRecord:
+    def test_existing(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Some text")
+        record = get_record(rid)
+        assert record is not None
+        assert record["id"] == rid
+        assert record["title"] == "Vid"
+        assert record["body"] == "Some text"
+
+    def test_nonexistent(self, tmp_results):
+        assert get_record("00000000") is None
+
+    def test_invalid_id(self, tmp_results):
+        assert get_record("not-hex!") is None
+
+
+class TestResetRecord:
+    def test_resets_status_and_model(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Old text")
+        assert reset_record(rid, model="gpt-4o-transcribe-diarize") is True
+        record = get_record(rid)
+        assert record["status"] == "in_progress"
+        assert record["model"] == "gpt-4o-transcribe-diarize"
+        assert record["body"] == ""
+        assert record["error"] == ""
+
+    def test_preserves_metadata(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 120)
+        complete_record(rid, "Text")
+        record_before = get_record(rid)
+        reset_record(rid, model="new-model")
+        record_after = get_record(rid)
+        assert record_after["title"] == record_before["title"]
+        assert record_after["url"] == record_before["url"]
+        assert record_after["duration"] == record_before["duration"]
+        assert record_after["created_at"] == record_before["created_at"]
+
+    def test_nonexistent_returns_false(self, tmp_results):
+        assert reset_record("00000000") is False
+
+
+class TestModelField:
+    def test_stored_on_create(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="gpt-4o-transcribe-diarize")
+        record = get_record(rid)
+        assert record["model"] == "gpt-4o-transcribe-diarize"
+
+    def test_preserved_through_complete(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="gpt-4o-transcribe-diarize")
+        complete_record(rid, "Text")
+        record = get_record(rid)
+        assert record["status"] == "done"
+        assert record["model"] == "gpt-4o-transcribe-diarize"
+
+    def test_preserved_through_fail(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="gpt-4o-transcribe-diarize")
+        fail_record(rid, "error msg")
+        record = get_record(rid)
+        assert record["status"] == "error"
+        assert record["model"] == "gpt-4o-transcribe-diarize"
+
+    def test_defaults_empty_for_old_records(self, tmp_results):
+        """Records without model field should default to empty string."""
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        record = get_record(rid)
+        assert record["model"] == ""
+
+    def test_history_includes_model(self, tmp_results):
+        create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="gpt-4o-transcribe-diarize")
+        records = get_history()
+        assert records[0]["model"] == "gpt-4o-transcribe-diarize"
+
+
+class TestAudioCache:
+    def test_save_and_find(self, tmp_results, tmp_path):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        audio = tmp_path / "download.mp3"
+        audio.write_bytes(b"\x00" * 1024)
+        cached = save_audio(rid, audio)
+        assert cached is not None
+        assert cached.exists()
+        assert cached.name == f"{rid}.mp3"
+        found = get_audio_path(rid)
+        assert found is not None
+        assert found == cached
+
+    def test_get_audio_nonexistent(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        assert get_audio_path(rid) is None
+
+    def test_get_audio_invalid_id(self, tmp_results):
+        assert get_audio_path("not-hex!") is None
+        assert get_audio_path("") is None
+        assert get_audio_path("abcd12345") is None
+
+    def test_delete_removes_audio(self, tmp_results, tmp_path):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        audio = tmp_path / "download.mp3"
+        audio.write_bytes(b"\x00" * 1024)
+        cached = save_audio(rid, audio)
+        assert cached.exists()
+        delete_record(rid)
+        assert not cached.exists()
+        assert get_audio_path(rid) is None

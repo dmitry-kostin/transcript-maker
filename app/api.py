@@ -3,8 +3,10 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -18,7 +20,8 @@ from app.downloader import download_audio, DownloadError
 from app.history import (
     create_record, complete_record, fail_record,
     get_history, get_result_path, delete_record,
-    get_record_status, RESULTS_DIR,
+    get_record, get_record_status, reset_record,
+    save_audio, get_audio_path, RESULTS_DIR,
 )
 from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
 
@@ -50,6 +53,10 @@ class TranscribeRequest(BaseModel):
         return v
 
 
+class RetranscribeRequest(BaseModel):
+    model: str = ""
+
+
 @router.post("/api/transcribe")
 async def transcribe(req: TranscribeRequest, request: Request):
     async def event_generator():
@@ -77,7 +84,8 @@ async def transcribe(req: TranscribeRequest, request: Request):
                 return
 
             # Create history record
-            record_id = create_record(title, req.url, duration)
+            record_id = create_record(title, req.url, duration, model=req.model)
+            save_audio(record_id, audio_path)
             yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
 
             # Chunk (blocking I/O → thread pool)
@@ -132,6 +140,106 @@ async def transcribe(req: TranscribeRequest, request: Request):
 async def history():
     records = get_history()
     return records
+
+
+@router.get("/api/history/{record_id}")
+async def get_history_record(record_id: str):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    record = get_record(record_id)
+    if not record:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    record.pop("path", None)
+    return record
+
+
+@router.post("/api/history/{record_id}/retranscribe")
+async def retranscribe(record_id: str, req: RetranscribeRequest, request: Request):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    record = get_record(record_id)
+    if not record:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    if record["status"] == "in_progress":
+        return JSONResponse({"error": "Record is currently being processed"}, status_code=409)
+
+    url = record["url"]
+
+    async def event_generator():
+        audio_path = None
+        try:
+            logger.info("Retranscribe request: %s (record %s)", url, record_id)
+
+            # Try cached audio first, fall back to re-download
+            cached_audio = get_audio_path(record_id)
+            if cached_audio:
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Using cached audio..."})}
+                tmp_dir = Path(settings.temp_dir)
+                tmp_dir.mkdir(exist_ok=True)
+                tmp_name = f"retranscribe_{record_id}_{uuid.uuid4().hex[:8]}{cached_audio.suffix}"
+                audio_path = tmp_dir / tmp_name
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, shutil.copy2, cached_audio, audio_path)
+            else:
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Downloading audio from YouTube..."})}
+                audio_path, _duration, _title = await download_audio(url)
+                file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": f"Download complete ({file_size_mb:.1f} MB)"})}
+                save_audio(record_id, audio_path)
+
+            # Guard: client disconnect
+            if await request.is_disconnected():
+                logger.warning("Client disconnected after download")
+                return
+
+            # Reset the record to in_progress with the new model
+            reset_record(record_id, model=req.model)
+            yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
+
+            # Chunk
+            loop = asyncio.get_running_loop()
+            chunks = await loop.run_in_executor(None, prepare_chunks, audio_path)
+            if len(chunks) > 1:
+                yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Audio split into {len(chunks)} chunks", "record_id": record_id})}
+
+            # Transcribe
+            transcript_parts = []
+            for i, chunk_path in enumerate(chunks):
+                if await request.is_disconnected():
+                    logger.warning("Client disconnected during transcription")
+                    break
+                yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id})}
+                text = await transcribe_chunk(chunk_path, model=req.model or None)
+                transcript_parts.append(text)
+
+            # Guard: don't save partial transcript if client disconnected
+            if await request.is_disconnected():
+                logger.warning("Client disconnected, leaving record as in_progress")
+                return
+
+            full_text = " ".join(transcript_parts)
+            if not complete_record(record_id, full_text):
+                logger.warning("Retranscription succeeded but history write failed for %s", record_id)
+            logger.info("Retranscription done: %s", record_id)
+            yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": record["duration"], "title": record["title"], "record_id": record_id})}
+            yield {"event": "done", "data": "{}"}
+
+        except DownloadError as e:
+            logger.error("Download error: %s", e)
+            fail_record(record_id, str(e))
+            yield {"event": "error", "data": json.dumps({"message": str(e), "record_id": record_id})}
+        except Exception as e:
+            logger.error("Unexpected error: %s", e, exc_info=True)
+            fail_record(record_id, str(e))
+            yield {"event": "error", "data": json.dumps({"message": f"An error occurred: {e}", "record_id": record_id})}
+        finally:
+            if get_record_status(record_id) == "in_progress":
+                fail_record(record_id, "Transcription interrupted")
+                logger.warning("Marked interrupted record as failed: %s", record_id)
+            if audio_path:
+                cleanup_temp_files(audio_path)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/api/history/{record_id}/reveal")
