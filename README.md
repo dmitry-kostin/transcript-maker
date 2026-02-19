@@ -9,12 +9,16 @@ Paste a YouTube URL, get a transcript. A single-page web app that downloads audi
 
 - **YouTube audio download** via yt-dlp (any public YouTube video up to 4 hours)
 - **OpenAI Whisper transcription** with automatic language detection
+- **Speaker detection** — optional diarization with speaker labels (`gpt-4o-transcribe-diarize`)
+- **Re-transcribe** — re-run any completed or failed transcription, optionally switching models
+- **Expandable history** — click any completed transcript to preview the text inline
 - **Real-time progress** streamed to the browser via Server-Sent Events
 - **Cancel** an in-progress transcription from the UI
 - **History** with status tracking — persists across page refreshes and server restarts
 - **Show in Finder** — reveal any saved transcript file on disk
 - **Copy / Download** — copy transcript to clipboard or save as `.txt`
 - **Markdown-based storage** — each transcript is a `.md` file, no database
+- **Playlist rejection** — only single video URLs accepted
 
 ## Tech Stack
 
@@ -90,7 +94,6 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `TM_OPENAI_API_KEY` | *(required)* | OpenAI API key |
 | `TM_TEMP_DIR` | `./tmp` | Directory for temporary audio files |
 | `TM_RESULTS_DIR` | `./results` | Directory for saved transcript `.md` files |
-| `TM_WHISPER_MODEL` | `whisper-1` | OpenAI Whisper model name |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
 
@@ -102,17 +105,23 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `GET` | `/static/{path}` | Serve CSS / JS assets |
 | `POST` | `/api/transcribe` | Start transcription (returns SSE stream) |
 | `GET` | `/api/history` | List all saved transcription records |
+| `GET` | `/api/history/{id}` | Get single record with transcript body |
+| `POST` | `/api/history/{id}/retranscribe` | Re-transcribe with optional model change (SSE stream) |
 | `POST` | `/api/history/{id}/reveal` | Open Finder with the transcript file selected |
 | `DELETE` | `/api/history/{id}` | Delete a saved transcript |
+| `POST` | `/api/cleanup` | Clean up temp files and stale records |
 
 ### POST /api/transcribe
 
 **Request:**
 ```json
-{ "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }
+{ "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "model": "gpt-4o-transcribe-diarize" }
 ```
 
-Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs.
+- `url` — YouTube video URL (required)
+- `model` — Whisper model to use (optional). `""` or omitted for default (`gpt-4o-transcribe`), `"gpt-4o-transcribe-diarize"` for speaker detection.
+
+Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs or playlist URLs.
 
 **Response:** Server-Sent Events stream with these event types:
 
@@ -122,6 +131,19 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
 | `transcript` | `{"text": "...", "title": "...", "duration_seconds": N, "record_id": "..."}` | Transcription complete |
 | `error` | `{"message": "...", "record_id": "..."}` | On failure |
 | `done` | `{}` | Stream finished |
+
+### POST /api/history/{id}/retranscribe
+
+Re-transcribes an existing record using its stored URL. Returns an SSE stream identical to `/api/transcribe`. Audio is cached after the first download. Re-transcribe reuses cached audio without re-downloading from YouTube.
+
+**Request:**
+```json
+{ "model": "gpt-4o-transcribe-diarize" }
+```
+
+- `model` — Whisper model to use (optional, same as `/api/transcribe`)
+
+Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
 
 ### GET /api/history
 
@@ -133,24 +155,26 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
     "title": "Never Gonna Give You Up",
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "status": "done",
-    "duration": "213",
+    "duration": 213,
+    "model": "gpt-4o-transcribe-diarize",
     "created_at": "2026-02-19T10:30:00",
-    "error": "",
-    "body": "Full transcript text..."
+    "error": ""
   }
 ]
 ```
+
+Note: `body` and `path` are stripped from the list response. Use `GET /api/history/{id}` to fetch the full record with transcript body.
 
 Records are sorted newest-first by `created_at`.
 
 ## Processing Pipeline
 
-1. **Validate** — reject non-YouTube URLs (422)
+1. **Validate** — reject non-YouTube URLs and playlist URLs (422)
 2. **Download** — yt-dlp extracts audio as 64kbps MP3 (async via thread pool)
 3. **Guard** — reject videos longer than 4 hours; check for client disconnect
-4. **Create record** — write `.md` file with `status: in_progress`
+4. **Create record** — write `.md` file with `status: in_progress` and selected model
 5. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)
-6. **Transcribe** — send each chunk to OpenAI Whisper API sequentially
+6. **Transcribe** — send each chunk to OpenAI Whisper API sequentially (using selected model)
 7. **Complete** — update `.md` to `status: done`, write transcript as body
 8. **Cleanup** — delete temporary audio files
 
@@ -165,7 +189,8 @@ Each transcription is stored as a markdown file in `results/` with YAML frontmat
 title: "Rick Astley - Never Gonna Give You Up"
 url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 status: "done"
-duration: "213"
+duration: 213
+model: "gpt-4o-transcribe-diarize"
 created_at: "2026-02-19T10:30:00"
 error: ""
 ---

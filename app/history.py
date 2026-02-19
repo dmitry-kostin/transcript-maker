@@ -1,5 +1,6 @@
 import logging
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,7 @@ def _parse_md(path: Path) -> dict | None:
         "url": meta.get("url", ""),
         "status": meta.get("status", "unknown"),
         "duration": int(meta.get("duration", 0) or 0),
+        "model": meta.get("model", ""),
         "created_at": meta.get("created_at", ""),
         "error": meta.get("error", ""),
         "body": body,
@@ -72,7 +74,7 @@ def _parse_md(path: Path) -> dict | None:
     }
 
 
-def create_record(title: str, url: str, duration: float) -> str:
+def create_record(title: str, url: str, duration: float, model: str = "") -> str:
     """Create a new result .md file with status: in_progress. Returns record_id."""
     RESULTS_DIR.mkdir(exist_ok=True)
     record_id = uuid.uuid4().hex[:8]
@@ -85,6 +87,7 @@ def create_record(title: str, url: str, duration: float) -> str:
         "url": url,
         "status": "in_progress",
         "duration": int(duration),
+        "model": model,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
         "error": "",
     }
@@ -109,6 +112,7 @@ def complete_record(record_id: str, text: str) -> bool:
         "url": parsed["url"],
         "status": "done",
         "duration": parsed["duration"],
+        "model": parsed.get("model", ""),
         "created_at": parsed["created_at"],
         "error": "",
     }
@@ -133,11 +137,41 @@ def fail_record(record_id: str, error_msg: str) -> bool:
         "url": parsed["url"],
         "status": "error",
         "duration": parsed["duration"],
+        "model": parsed.get("model", ""),
         "created_at": parsed["created_at"],
         "error": error_msg,
     }
     _write_md(path, meta)
     logger.info("Record failed: %s", record_id)
+    return True
+
+
+def get_record(record_id: str) -> dict | None:
+    """Return a single record by ID, or None if not found."""
+    path = _resolve_path(record_id)
+    if not path:
+        return None
+    return _parse_md(path)
+
+
+def reset_record(record_id: str, model: str = "") -> bool:
+    """Reset an existing record back to in_progress with a new model. Returns True if written."""
+    path = _resolve_path(record_id)
+    if not path:
+        return False
+    parsed = _parse_md(path)
+    if not parsed:
+        return False
+    meta = {
+        "title": parsed["title"],
+        "url": parsed["url"],
+        "status": "in_progress",
+        "duration": parsed["duration"],
+        "model": model,
+        "created_at": parsed["created_at"],
+        "error": "",
+    }
+    _write_md(path, meta)
     return True
 
 
@@ -172,12 +206,40 @@ def get_result_path(record_id: str) -> Path | None:
     return _resolve_path(record_id)
 
 
+def save_audio(record_id: str, audio_path: Path) -> Path | None:
+    """Copy downloaded audio to results/ for reuse. Returns cached path or None."""
+    path = _resolve_path(record_id)
+    if not path:
+        return None
+    cached = RESULTS_DIR / f"{record_id}{audio_path.suffix}"
+    try:
+        shutil.copy2(audio_path, cached)
+    except OSError:
+        logger.warning("Could not cache audio for %s", record_id)
+        return None
+    return cached
+
+
+def get_audio_path(record_id: str) -> Path | None:
+    """Find cached audio file for a record. Returns path or None."""
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return None
+    RESULTS_DIR.mkdir(exist_ok=True)
+    for path in RESULTS_DIR.glob(f"{record_id}.*"):
+        if path.suffix != ".md":
+            return path
+    return None
+
+
 def delete_record(record_id: str) -> bool:
-    """Delete a record's .md file. Returns True if deleted."""
+    """Delete a record's .md file and cached audio. Returns True if deleted."""
     path = _resolve_path(record_id)
     if not path:
         return False
+    audio = get_audio_path(record_id)
     path.unlink(missing_ok=True)
+    if audio:
+        audio.unlink(missing_ok=True)
     logger.info("Record deleted: %s", record_id)
     return True
 
