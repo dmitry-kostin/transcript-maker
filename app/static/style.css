@@ -90,16 +90,12 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  justify-content: flex-start;
+  padding-top: 64px;
 }
 
 .app[data-state="idle"] {
-  justify-content: center;
-  padding-bottom: 20vh;
-}
-
-.app[data-state="active"] {
-  justify-content: flex-start;
-  padding-top: 64px;
+  padding-top: 15vh;
 }
 
 .hero {
@@ -107,6 +103,25 @@ body {
 }
 
 /* ─── Logo ─── */
+
+.logo-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: -12px;
+  margin-bottom: 24px;
+}
+
+.logo-icon {
+  height: 72px;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+}
 
 .logo {
   font-size: 1.75rem;
@@ -121,8 +136,7 @@ body {
 .subtitle {
   color: var(--text-muted);
   font-size: 0.925rem;
-  margin-top: 6px;
-  margin-bottom: 24px;
+  margin-top: 2px;
 }
 
 /* ─── Command bar ─── */
@@ -131,7 +145,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 6px 6px 16px;
+  padding: 6px 10px 6px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -139,8 +153,8 @@ body {
 }
 
 .command-bar:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--amber-dim), 0 8px 32px rgba(0, 0, 0, 0.3);
+  border-color: rgba(160, 184, 32, 0.4);
+  box-shadow: 0 0 0 3px rgba(160, 184, 32, 0.15), 0 8px 32px rgba(0, 0, 0, 0.3);
   transform: translateY(-1px);
 }
 
@@ -266,7 +280,7 @@ button:active:not(:disabled) {
   align-items: center;
   gap: 6px;
   padding: 8px 18px;
-  background: var(--amber);
+  background: #a0b820;
   color: #131318;
   flex-shrink: 0;
 }
@@ -277,7 +291,7 @@ button:active:not(:disabled) {
 }
 
 #transcribe-btn:hover:not(:disabled) {
-  background: #d4943a;
+  background: #8ea016;
 }
 
 #transcribe-btn:disabled {
@@ -615,7 +629,7 @@ button:active:not(:disabled) {
 
 .history-card.expanded .quick-copy {
   opacity: 1;
-  align-self: flex-end;
+  align-self: flex-start;
 }
 
 /* Card actions — hidden by default, shown when expanded or error */
@@ -625,6 +639,7 @@ button:active:not(:disabled) {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
+  margin-bottom: 6px;
 }
 
 .history-card.expanded .card-actions {
@@ -633,6 +648,10 @@ button:active:not(:disabled) {
 
 .history-card[data-status="error"] .card-actions {
   display: flex;
+}
+
+.history-card .card-actions:has(+ .summarize-prompt) {
+  margin-bottom: 16px;
 }
 
 .history-card .card-actions button {
@@ -664,6 +683,46 @@ button:active:not(:disabled) {
   background: var(--red-dim);
   border-color: rgba(248, 113, 113, 0.2);
   color: var(--red);
+}
+
+/* Quick summarize — header-level star button next to copy */
+
+.history-card .quick-summarize {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0;
+  transition: opacity 200ms ease, border-color 200ms ease, background 200ms ease, align-self 200ms ease;
+}
+
+.history-card .quick-summarize .unicorn-icon {
+  font-size: 0.95rem;
+}
+
+.history-card:hover .quick-summarize {
+  opacity: 1;
+}
+
+.history-card .quick-summarize:hover {
+  border-color: rgba(108, 142, 239, 0.3);
+  background: var(--blue-dim);
+}
+
+.history-card.expanded .quick-summarize {
+  opacity: 1;
+  align-self: flex-start;
 }
 
 /* ─── Expandable card body ─── */
@@ -703,6 +762,174 @@ button:active:not(:disabled) {
 
 .card-body::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* ─── Card tabs ─── */
+
+.card-tabs {
+  width: 100%;
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-tab:first-child {
+  padding-left: 0;
+}
+
+.card-tab {
+  padding: 8px 8px;
+  margin-bottom: -1px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: none;
+  color: var(--text-dim);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: color 200ms ease, border-color 200ms ease;
+}
+
+.card-tab:hover {
+  color: var(--text-muted);
+}
+
+.card-tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+.card-tabs ~ .card-body,
+.card-tabs ~ .card-summary {
+  border-top: none;
+}
+
+/* ─── Summarize prompt ─── */
+
+.summarize-prompt {
+  width: 100%;
+  padding: 0;
+}
+
+.summarize-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  transition: border-color 300ms ease, box-shadow 300ms ease;
+}
+
+.summarize-bar:focus-within {
+  border-color: rgba(108, 142, 239, 0.4);
+  box-shadow: 0 0 0 3px rgba(108, 142, 239, 0.1);
+}
+
+.summarize-input {
+  width: 100%;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 0.825rem;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  outline: none;
+  resize: none;
+}
+
+.summarize-input::placeholder {
+  color: var(--text-dim);
+}
+
+.summarize-bar-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.summarize-generate-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--blue);
+  color: #fff;
+  border: 1px solid var(--blue);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.summarize-generate-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.summarize-generate-btn:hover:not(:disabled) {
+  background: #5a7de0;
+}
+
+.summarize-generate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.summarize-cancel-btn {
+  padding: 7px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.summarize-cancel-btn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+/* ─── Card summary ─── */
+
+.card-summary {
+  width: 100%;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.card-summary::-webkit-scrollbar {
+  width: 6px;
+}
+
+.card-summary::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.card-summary::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.card-summary::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.card-summary-text {
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+  white-space: pre-wrap;
 }
 
 /* ─── Toast ─── */
@@ -794,16 +1021,20 @@ button:active:not(:disabled) {
     padding: 0 12px;
   }
 
-  .app[data-state="idle"] {
-    padding-bottom: 10vh;
+  .app {
+    padding-top: 32px;
   }
 
-  .app[data-state="active"] {
-    padding-top: 32px;
+  .app[data-state="idle"] {
+    padding-top: 20vh;
   }
 
   .logo {
     font-size: 1.375rem;
+  }
+
+  .logo-icon {
+    height: 44px;
   }
 
   .command-bar {

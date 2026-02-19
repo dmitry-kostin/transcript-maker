@@ -2,7 +2,9 @@
 name = "transcript-maker"
 version = "0.1.0"
 description = "Paste a YouTube URL, get a transcript."
-authors = []
+authors = ["dmitry-kostin"]
+license = "MIT"
+repository = "https://github.com/dmitry-kostin/transcript-maker"
 package-mode = false
 
 [tool.poetry.dependencies]

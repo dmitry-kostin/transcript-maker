@@ -154,7 +154,10 @@ def get_record(record_id: str) -> dict | None:
     path = _resolve_path(record_id)
     if not path:
         return None
-    return _parse_md(path)
+    parsed = _parse_md(path)
+    if parsed:
+        parsed["has_summary"] = _summary_path(record_id).exists()
+    return parsed
 
 
 def reset_record(record_id: str, model: str = "") -> bool:
@@ -188,6 +191,7 @@ def get_history() -> list[dict]:
             # Don't send the full body in the list — just metadata
             parsed.pop("body", None)
             parsed.pop("path", None)
+            parsed["has_summary"] = _summary_path(parsed["id"]).exists()
             records.append(parsed)
     records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     return records
@@ -235,16 +239,74 @@ def get_audio_path(record_id: str) -> Path | None:
 
 
 def delete_record(record_id: str) -> bool:
-    """Delete a record's .md file and cached audio. Returns True if deleted."""
+    """Delete a record's .md file, cached audio, and summary. Returns True if deleted."""
     path = _resolve_path(record_id)
     if not path:
         return False
     audio = get_audio_path(record_id)
+    delete_summary(record_id)
     path.unlink(missing_ok=True)
     if audio:
         audio.unlink(missing_ok=True)
     logger.info("Record deleted: %s", record_id)
     return True
+
+
+def _summary_path(record_id: str) -> Path:
+    """Return the path for a record's summary sidecar file."""
+    return RESULTS_DIR / f"{record_id}_summary.md"
+
+
+def save_summary(record_id: str, summary: str, prompt: str = "") -> bool:
+    """Save a summary for a record. Returns True if written."""
+    path = _resolve_path(record_id)
+    if not path:
+        return False
+    RESULTS_DIR.mkdir(exist_ok=True)
+    meta = {
+        "prompt": prompt,
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    _write_md(_summary_path(record_id), meta, summary)
+    logger.info("Summary saved for record %s", record_id)
+    return True
+
+
+def get_summary(record_id: str) -> dict | None:
+    """Return summary for a record, or None if not found."""
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return None
+    sp = _summary_path(record_id)
+    if not sp.exists():
+        return None
+    try:
+        text = sp.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    meta = {}
+    body = ""
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                loaded = yaml.safe_load(parts[1])
+                if isinstance(loaded, dict):
+                    meta = {k: str(v) if v is not None else "" for k, v in loaded.items()}
+            except yaml.YAMLError:
+                pass
+            body = parts[2].strip()
+    return {
+        "prompt": meta.get("prompt", ""),
+        "summary": body,
+        "created_at": meta.get("created_at", ""),
+    }
+
+
+def delete_summary(record_id: str) -> None:
+    """Delete a summary sidecar file if it exists."""
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return
+    _summary_path(record_id).unlink(missing_ok=True)
 
 
 def cleanup_stale_records() -> None:

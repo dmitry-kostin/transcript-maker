@@ -23,8 +23,10 @@ from app.history import (
     get_history, get_result_path, delete_record,
     get_record, get_record_status, reset_record,
     save_audio, get_audio_path, RESULTS_DIR,
+    save_summary, get_summary,
 )
 from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
+from app.summarizer import summarize_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -42,6 +44,17 @@ DEMO_TRANSCRIPT = (
 DEMO_DOWNLOAD_SECONDS = 10
 DEMO_TRANSCRIBE_SECONDS = 10
 DEMO_TICK = 0.5
+
+DEMO_SUMMARY = (
+    "## Key Points\n\n"
+    "- This is a simulated summary generated in demo mode\n"
+    "- No real OpenAI API call was made\n"
+    "- The transcript discussed various placeholder topics\n\n"
+    "## Main Topics\n\n"
+    "1. Quick brown fox athletics\n"
+    "2. Lorem ipsum philosophy\n"
+    "3. General placeholder discourse"
+)
 
 
 async def _demo_event_generator(url: str, model: str, request: Request, record_id: str | None = None, title: str | None = None):
@@ -99,6 +112,7 @@ async def _demo_event_generator(url: str, model: str, request: Request, record_i
         full_text = DEMO_TRANSCRIPT
         if model == "gpt-4o-transcribe-diarize":
             full_text = "Speaker 1: " + DEMO_TRANSCRIPT
+        full_text = f"{title}\n\n{full_text}"
         complete_record(record_id, full_text)
         yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "title": title, "record_id": record_id})}
         yield {"event": "done", "data": "{}"}
@@ -141,6 +155,10 @@ class RetranscribeRequest(BaseModel):
     model: str = ""
 
 
+class SummarizeRequest(BaseModel):
+    prompt: str = ""
+
+
 @router.post("/api/demo/transcribe")
 async def demo_transcribe(request: Request):
     try:
@@ -162,6 +180,22 @@ async def demo_retranscribe(record_id: str, request: Request):
         record["url"], body.get("model", ""), request,
         record_id=record_id, title=record["title"],
     ))
+
+
+@router.post("/api/demo/history/{record_id}/summarize")
+async def demo_summarize(record_id: str, req: SummarizeRequest):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    record = get_record(record_id)
+    if not record:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    if record["status"] != "done":
+        return JSONResponse({"error": "Record is not completed"}, status_code=400)
+    await asyncio.sleep(2)
+    prompt = req.prompt.strip()
+    summary_with_title = f"{record['title']}\n\n{DEMO_SUMMARY}"
+    save_summary(record_id, summary_with_title, prompt)
+    return {"summary": summary_with_title, "prompt": prompt}
 
 
 @router.post("/api/transcribe")
@@ -216,7 +250,7 @@ async def transcribe(req: TranscribeRequest, request: Request):
                 logger.warning("Client disconnected, leaving record as in_progress")
                 return
 
-            full_text = " ".join(transcript_parts)
+            full_text = f"{title}\n\n{' '.join(transcript_parts)}"
             if not complete_record(record_id, full_text):
                 logger.warning("Transcription succeeded but history write failed for %s", record_id)
             logger.info("Transcription done: %s", record_id)
@@ -324,7 +358,7 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
                 logger.warning("Client disconnected, leaving record as in_progress")
                 return
 
-            full_text = " ".join(transcript_parts)
+            full_text = f"{record['title']}\n\n{' '.join(transcript_parts)}"
             if not complete_record(record_id, full_text):
                 logger.warning("Retranscription succeeded but history write failed for %s", record_id)
             logger.info("Retranscription done: %s", record_id)
@@ -359,6 +393,36 @@ async def reveal_in_finder(record_id: str):
     logger.info("Reveal in Finder: %s", record_id)
     subprocess.Popen(["open", "-R", str(path)])
     return {"ok": True}
+
+
+@router.post("/api/history/{record_id}/summarize")
+async def summarize(record_id: str, req: SummarizeRequest):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    record = get_record(record_id)
+    if not record:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    if record["status"] != "done":
+        return JSONResponse({"error": "Record is not completed"}, status_code=400)
+    try:
+        summary = await summarize_text(record["body"], req.prompt)
+    except Exception as e:
+        logger.error("Summarize error for %s: %s", record_id, e, exc_info=True)
+        return JSONResponse({"error": f"Summarization failed: {e}"}, status_code=500)
+    prompt = req.prompt.strip()
+    summary_with_title = f"{record['title']}\n\n{summary}"
+    save_summary(record_id, summary_with_title, prompt)
+    return {"summary": summary_with_title, "prompt": prompt}
+
+
+@router.get("/api/history/{record_id}/summary")
+async def get_record_summary(record_id: str):
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    result = get_summary(record_id)
+    if not result:
+        return JSONResponse({"error": "No summary found"}, status_code=404)
+    return result
 
 
 @router.delete("/api/history/{record_id}")
