@@ -32,6 +32,7 @@ async def download_audio(url: str) -> tuple[Path, float, str]:
                 "preferredquality": "64",
             }
         ],
+        "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
     }

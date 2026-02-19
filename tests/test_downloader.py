@@ -85,3 +85,23 @@ class TestDownloader:
         path1, _, _ = await download_audio("https://youtube.com/watch?v=same_vid")
         path2, _, _ = await download_audio("https://youtube.com/watch?v=same_vid")
         assert path1 != path2  # Different UUID suffixes
+
+    @pytest.mark.asyncio
+    async def test_noplaylist_option_is_set(self, tmp_path, monkeypatch):
+        import app.downloader as mod
+        monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
+        monkeypatch.setattr(mod.settings, "audio_format", "mp3")
+
+        captured_opts = {}
+
+        def fake_download(url, opts):
+            captured_opts.update(opts)
+            template = opts["outtmpl"]
+            output_path = template.replace("%(id)s", "dQw4w9WgXcQ").replace("%(ext)s", "mp3")
+            Path(output_path).write_bytes(b"\x00" * 1000)
+            return {"id": "dQw4w9WgXcQ", "duration": 60, "title": "Test"}
+
+        monkeypatch.setattr(mod, "_download_sync", fake_download)
+
+        await download_audio("https://youtube.com/watch?v=dQw4w9WgXcQ")
+        assert captured_opts.get("noplaylist") is True

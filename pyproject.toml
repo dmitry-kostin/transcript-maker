@@ -22,6 +22,10 @@ httpx = "^0.28"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "integration: end-to-end tests using real YouTube download and OpenAI API (deselected by default, run with -m integration)",
+]
+addopts = "-m 'not integration'"
 
 [build-system]
 requires = ["poetry-core"]
