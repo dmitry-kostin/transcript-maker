@@ -21,11 +21,12 @@ pyyaml = "^6.0"
 pytest = "^8.0"
 pytest-asyncio = "^0.25"
 httpx = "^0.28"
+json-repair = "^0.58.0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [
-    "integration: end-to-end tests using real YouTube download and OpenAI API (deselected by default, run with -m integration)",
+    "integration: end-to-end tests using real YouTube download and OpenAI/Gemini APIs (deselected by default, run with -m integration)",
 ]
 addopts = "-m 'not integration'"
 

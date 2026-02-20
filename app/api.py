@@ -16,16 +16,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sse_starlette.sse import EventSourceResponse
 
+from app.clients import is_gemini_model
 from app.config import settings
 from app.downloader import download_audio, DownloadError
 from app.history import (
     create_record, complete_record, fail_record,
     get_history, get_result_path, delete_record,
     get_record, get_record_status, reset_record,
-    save_audio, get_audio_path, RESULTS_DIR,
+    save_audio, get_audio_path, find_cached_audio_by_url, RESULTS_DIR,
     save_summary, get_summary,
 )
-from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
+from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files, get_stored_model, resolve_model
 from app.summarizer import summarize_text
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,8 @@ DEMO_TRANSCRIPT = (
     "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 )
 
-DEMO_DOWNLOAD_SECONDS = 10
-DEMO_TRANSCRIBE_SECONDS = 10
+DEMO_DOWNLOAD_SECONDS = 5
+DEMO_TRANSCRIBE_SECONDS = 5
 DEMO_TICK = 0.5
 
 DEMO_SUMMARY = (
@@ -57,12 +58,18 @@ DEMO_SUMMARY = (
 )
 
 
-async def _demo_event_generator(url: str, model: str, request: Request, record_id: str | None = None, title: str | None = None):
+async def _demo_event_generator(url: str, request: Request, record_id: str | None = None, title: str | None = None, duration_limit: int = 0, diarize: bool = False, model: str = ""):
     """Mock SSE generator — simulates download + transcribe with sleeps, no real APIs."""
     title = title or f"Demo: {url[:60]}"
     duration = random.randint(120, 7200)
     use_chunks = random.random() < 0.5
     num_chunks = random.randint(2, 6) if use_chunks else 1
+
+    # Simulate duration limit clipping
+    if duration_limit and duration > duration_limit:
+        duration = duration_limit
+
+    stored_model = get_stored_model(model, diarize)
 
     try:
         # Simulate download (10s)
@@ -81,9 +88,9 @@ async def _demo_event_generator(url: str, model: str, request: Request, record_i
 
         # Create or reset record
         if record_id:
-            reset_record(record_id, model=model)
+            reset_record(record_id, model=stored_model, duration_limit=duration_limit)
         else:
-            record_id = create_record(title, url, duration, model=model)
+            record_id = create_record(title, url, duration, model=stored_model, duration_limit=duration_limit)
 
         yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
         await asyncio.sleep(1.0)
@@ -98,8 +105,6 @@ async def _demo_event_generator(url: str, model: str, request: Request, record_i
                 return
             chunk_label = f" chunk {chunk_i + 1} of {num_chunks}" if num_chunks > 1 else ""
             yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{chunk_label}...", "record_id": record_id})}
-            if num_chunks > 1:
-                yield {"event": "chunk_progress", "data": json.dumps({"current": chunk_i, "total": num_chunks})}
             for _ in range(steps_per_chunk):
                 if await request.is_disconnected():
                     return
@@ -110,11 +115,11 @@ async def _demo_event_generator(url: str, model: str, request: Request, record_i
 
         # Complete
         full_text = DEMO_TRANSCRIPT
-        if model == "gpt-4o-transcribe-diarize":
+        if diarize:
             full_text = "Speaker 1: " + DEMO_TRANSCRIPT
         full_text = f"{title}\n\n{full_text}"
         complete_record(record_id, full_text)
-        yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "title": title, "record_id": record_id})}
+        yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "duration_limit": duration_limit, "title": title, "record_id": record_id, "model": stored_model})}
         yield {"event": "done", "data": "{}"}
 
     except Exception as e:
@@ -128,11 +133,14 @@ async def _demo_event_generator(url: str, model: str, request: Request, record_i
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 MAX_DURATION_SECONDS = 4 * 60 * 60  # 4 hours
+MAX_DURATION_LIMIT_MINUTES = 480  # 8 hours — matches frontend max attribute
 
 
 class TranscribeRequest(BaseModel):
     url: str
     model: str = ""
+    diarize: bool = False
+    duration_limit: int = 0  # minutes from frontend, converted to seconds in handler
 
     @field_validator("url")
     @classmethod
@@ -150,13 +158,34 @@ class TranscribeRequest(BaseModel):
             )
         return v
 
+    @field_validator("duration_limit")
+    @classmethod
+    def validate_duration_limit(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("duration_limit must be >= 0")
+        if v > MAX_DURATION_LIMIT_MINUTES:
+            raise ValueError(f"duration_limit must be <= {MAX_DURATION_LIMIT_MINUTES} minutes")
+        return v
+
 
 class RetranscribeRequest(BaseModel):
     model: str = ""
+    diarize: bool = False
+    duration_limit: int = 0  # minutes from frontend, converted to seconds in handler
+
+    @field_validator("duration_limit")
+    @classmethod
+    def validate_duration_limit(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("duration_limit must be >= 0")
+        if v > MAX_DURATION_LIMIT_MINUTES:
+            raise ValueError(f"duration_limit must be <= {MAX_DURATION_LIMIT_MINUTES} minutes")
+        return v
 
 
 class SummarizeRequest(BaseModel):
     prompt: str = ""
+    model: str = ""
 
 
 @router.post("/api/demo/transcribe")
@@ -165,7 +194,14 @@ async def demo_transcribe(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    return EventSourceResponse(_demo_event_generator(body.get("url", "demo"), body.get("model", ""), request))
+    limit_min = int(body.get("duration_limit", 0) or 0)
+    # duration_limit: minutes from client → seconds for storage
+    limit_sec = limit_min * 60 if limit_min else 0
+    diarize = bool(body.get("diarize", False))
+    return EventSourceResponse(_demo_event_generator(
+        body.get("url", "demo"), request,
+        duration_limit=limit_sec, diarize=diarize, model=body.get("model", ""),
+    ))
 
 
 @router.post("/api/demo/history/{record_id}/retranscribe")
@@ -176,9 +212,14 @@ async def demo_retranscribe(record_id: str, request: Request):
     if not record:
         return JSONResponse({"error": "Not found"}, status_code=404)
     body = await request.json()
+    limit_min = int(body.get("duration_limit", 0) or 0)
+    # duration_limit: minutes from client → seconds for storage (0 = no limit)
+    limit_sec = limit_min * 60 if limit_min else 0
+    diarize = bool(body.get("diarize", False))
     return EventSourceResponse(_demo_event_generator(
-        record["url"], body.get("model", ""), request,
+        record["url"], request,
         record_id=record_id, title=record["title"],
+        duration_limit=limit_sec, diarize=diarize, model=body.get("model", ""),
     ))
 
 
@@ -198,19 +239,64 @@ async def demo_summarize(record_id: str, req: SummarizeRequest):
     return {"summary": summary_with_title, "prompt": prompt}
 
 
+@router.get("/api/providers")
+async def get_providers():
+    """Return available model providers based on configured API keys."""
+    providers = []
+    if settings.openai_api_key:
+        transcribe = settings.transcribe_model if not is_gemini_model(settings.transcribe_model) else settings.openai_transcribe_model
+        summarize = settings.summarize_model if not is_gemini_model(settings.summarize_model) else settings.openai_summarize_model
+        providers.append({
+            "id": "openai",
+            "label": "OpenAI",
+            "transcribe_model": transcribe,
+            "summarize_model": summarize,
+        })
+    if settings.google_api_key:
+        transcribe = settings.transcribe_model if is_gemini_model(settings.transcribe_model) else settings.gemini_transcribe_model
+        summarize = settings.summarize_model if is_gemini_model(settings.summarize_model) else settings.gemini_summarize_model
+        providers.append({
+            "id": "gemini",
+            "label": "Gemini",
+            "transcribe_model": transcribe,
+            "summarize_model": summarize,
+        })
+    return {"providers": providers}
+
+
 @router.post("/api/transcribe")
 async def transcribe(req: TranscribeRequest, request: Request):
+    # duration_limit: minutes from client → seconds for storage (0 = no limit)
+    limit_sec = req.duration_limit * 60 if req.duration_limit else 0
+    # Resolve model once — used for both storage and execution
+    actual_model, diarize_flag = resolve_model(req.model, req.diarize)
+    stored_model = get_stored_model(req.model, req.diarize)
+
     async def event_generator():
         audio_path = None
         record_id = None
         try:
             logger.info("Request: %s", req.url)
 
-            # Download
-            yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Downloading audio from YouTube..."})}
-            audio_path, duration, title = await download_audio(req.url)
-            file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
-            yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": f"Download complete ({file_size_mb:.1f} MB)"})}
+            # Try cached audio from a previous transcription of the same URL
+            cached = find_cached_audio_by_url(req.url)
+            if cached:
+                cached_path, cached_record = cached
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Using cached audio..."})}
+                tmp_dir = Path(settings.temp_dir)
+                tmp_dir.mkdir(exist_ok=True)
+                tmp_name = f"cached_{uuid.uuid4().hex[:8]}{cached_path.suffix}"
+                audio_path = tmp_dir / tmp_name
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, shutil.copy2, cached_path, audio_path)
+                duration = cached_record["duration"]
+                title = cached_record["title"]
+            else:
+                # Download
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": "Downloading audio from YouTube..."})}
+                audio_path, duration, title = await download_audio(req.url)
+                file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+                yield {"event": "progress", "data": json.dumps({"stage": "downloading", "message": f"Download complete ({file_size_mb:.1f} MB)"})}
 
             # Guard: max duration
             if duration and duration > MAX_DURATION_SECONDS:
@@ -225,13 +311,16 @@ async def transcribe(req: TranscribeRequest, request: Request):
                 return
 
             # Create history record
-            record_id = create_record(title, req.url, duration, model=req.model)
+            record_id = create_record(title, req.url, duration, model=stored_model, duration_limit=limit_sec)
+            # Cache audio from the local copy (safe even if original is deleted concurrently)
             save_audio(record_id, audio_path)
             yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
 
             # Chunk (blocking I/O → thread pool)
             loop = asyncio.get_running_loop()
-            chunks = await loop.run_in_executor(None, prepare_chunks, audio_path)
+            chunks = await loop.run_in_executor(
+                None, lambda: prepare_chunks(audio_path, duration_limit=limit_sec or None)
+            )
             if len(chunks) > 1:
                 yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Audio split into {len(chunks)} chunks", "record_id": record_id})}
 
@@ -242,7 +331,7 @@ async def transcribe(req: TranscribeRequest, request: Request):
                     logger.warning("Client disconnected during transcription")
                     break
                 yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id})}
-                text = await transcribe_chunk(chunk_path, model=req.model or None)
+                text = await transcribe_chunk(chunk_path, model=actual_model, diarize=diarize_flag)
                 transcript_parts.append(text)
 
             # Guard: don't save partial transcript if client disconnected
@@ -254,7 +343,7 @@ async def transcribe(req: TranscribeRequest, request: Request):
             if not complete_record(record_id, full_text):
                 logger.warning("Transcription succeeded but history write failed for %s", record_id)
             logger.info("Transcription done: %s", record_id)
-            yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "title": title, "record_id": record_id})}
+            yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "duration_limit": limit_sec, "title": title, "record_id": record_id, "model": stored_model})}
             yield {"event": "done", "data": "{}"}
 
         except DownloadError as e:
@@ -305,6 +394,11 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
         return JSONResponse({"error": "Record is currently being processed"}, status_code=409)
 
     url = record["url"]
+    # duration_limit: minutes from client → seconds for storage (0 = no limit)
+    limit_sec = req.duration_limit * 60 if req.duration_limit else 0
+    # Resolve model once — used for both storage and execution
+    actual_model, diarize_flag = resolve_model(req.model, req.diarize)
+    stored_model = get_stored_model(req.model, req.diarize)
 
     async def event_generator():
         audio_path = None
@@ -334,12 +428,14 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
                 return
 
             # Reset the record to in_progress with the new model
-            reset_record(record_id, model=req.model)
+            reset_record(record_id, model=stored_model, duration_limit=limit_sec)
             yield {"event": "progress", "data": json.dumps({"stage": "processing", "message": "Processing...", "record_id": record_id})}
 
             # Chunk
             loop = asyncio.get_running_loop()
-            chunks = await loop.run_in_executor(None, prepare_chunks, audio_path)
+            chunks = await loop.run_in_executor(
+                None, lambda: prepare_chunks(audio_path, duration_limit=limit_sec or None)
+            )
             if len(chunks) > 1:
                 yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Audio split into {len(chunks)} chunks", "record_id": record_id})}
 
@@ -350,7 +446,7 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
                     logger.warning("Client disconnected during transcription")
                     break
                 yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id})}
-                text = await transcribe_chunk(chunk_path, model=req.model or None)
+                text = await transcribe_chunk(chunk_path, model=actual_model, diarize=diarize_flag)
                 transcript_parts.append(text)
 
             # Guard: don't save partial transcript if client disconnected
@@ -362,7 +458,7 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
             if not complete_record(record_id, full_text):
                 logger.warning("Retranscription succeeded but history write failed for %s", record_id)
             logger.info("Retranscription done: %s", record_id)
-            yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": record["duration"], "title": record["title"], "record_id": record_id})}
+            yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": record["duration"], "duration_limit": limit_sec, "title": record["title"], "record_id": record_id, "model": stored_model})}
             yield {"event": "done", "data": "{}"}
 
         except DownloadError as e:
@@ -405,7 +501,7 @@ async def summarize(record_id: str, req: SummarizeRequest):
     if record["status"] != "done":
         return JSONResponse({"error": "Record is not completed"}, status_code=400)
     try:
-        summary = await summarize_text(record["body"], req.prompt)
+        summary = await summarize_text(record["body"], req.prompt, model=req.model)
     except Exception as e:
         logger.error("Summarize error for %s: %s", record_id, e, exc_info=True)
         return JSONResponse({"error": f"Summarization failed: {e}"}, status_code=500)

@@ -1,11 +1,9 @@
 import logging
 
-from openai import AsyncOpenAI
-
+from app.clients import get_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 SYSTEM_MESSAGE = (
     "You are a helpful assistant that summarizes transcripts. "
@@ -14,14 +12,16 @@ SYSTEM_MESSAGE = (
 )
 
 
-async def summarize_text(text: str, prompt: str = "") -> str:
-    """Summarize transcript text using OpenAI Chat Completions."""
+async def summarize_text(text: str, prompt: str = "", model: str = "") -> str:
+    """Summarize transcript text using Chat Completions."""
     prompt = prompt.strip()
     user_content = f"{prompt}\n\n---\n\n{text}"
 
-    logger.info("Summarizing %d chars with model %s", len(text), settings.summarize_model)
+    model = model or settings.summarize_model
+    client = get_client(model)
+    logger.info("Summarizing %d chars with model %s", len(text), model)
     response = await client.chat.completions.create(
-        model=settings.summarize_model,
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_MESSAGE},
             {"role": "user", "content": user_content},

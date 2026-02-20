@@ -259,6 +259,87 @@ body {
   color: var(--text-muted);
 }
 
+/* ─── Duration limit pill ─── */
+
+.duration-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.duration-pill input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.duration-pill input:checked + .pill-track {
+  background: var(--amber-dim);
+}
+
+.duration-pill input:checked + .pill-track .pill-thumb {
+  transform: translateX(12px);
+  background: var(--amber);
+}
+
+.duration-pill input:checked ~ .pill-label {
+  color: var(--text-muted);
+}
+
+.duration-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width 300ms var(--ease-out-expo), opacity 250ms ease;
+}
+
+.duration-input-group.visible {
+  width: 72px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#duration-limit-input {
+  width: 48px;
+  padding: 4px 6px;
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-align: center;
+  background: var(--surface-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+#duration-limit-input::-webkit-inner-spin-button,
+#duration-limit-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#duration-limit-input:focus {
+  border-color: var(--border-focus);
+}
+
+.duration-suffix {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
 /* ─── Buttons ─── */
 
 button {
@@ -978,6 +1059,46 @@ button:active:not(:disabled) {
   pointer-events: none;
 }
 
+/* ─── Provider selector ─── */
+
+.provider-selector {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 100;
+}
+
+.provider-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: color 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+
+.provider-btn:hover {
+  color: var(--text-muted);
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.provider-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transition: background 300ms ease;
+}
+
 /* ─── Keyframes ─── */
 
 @keyframes pulse {
@@ -1056,10 +1177,28 @@ button:active:not(:disabled) {
 
   .diarize-pill {
     order: 1;
-    width: 100%;
+    width: auto;
     padding: 4px 8px;
     border-top: 1px solid var(--border);
     margin-top: 2px;
+  }
+
+  .duration-pill {
+    order: 2;
+    padding: 4px 8px;
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+  }
+
+  .duration-input-group {
+    order: 3;
+  }
+
+  .duration-input-group.visible {
+    width: auto;
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+    padding: 4px 8px;
   }
 
 }

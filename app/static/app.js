@@ -74,6 +74,12 @@ function formatDuration(seconds) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+function formatMinutes(seconds) {
+  if (!seconds) return "0m";
+  const m = Math.ceil(seconds / 60);
+  return `${m}m`;
+}
+
 // ─── State management ───
 
 function setState(newState, data = {}) {
@@ -232,11 +238,14 @@ function showToast(msg) {
 function renderCard(record, opts = {}) {
   const expanded = opts.expanded || false;
   const date = record.created_at ? new Date(record.created_at + "Z").toLocaleDateString() : "";
-  const dur = formatDuration(record.duration);
+  const dur = record.duration_limit && record.duration_limit < record.duration
+    ? `${formatMinutes(record.duration_limit)} of ${formatDuration(record.duration)}`
+    : formatDuration(record.duration);
   const statusLabel = record.status === "in_progress" ? "in progress" : record.status;
-  const modelLabel = record.model === "gpt-4o-transcribe-diarize" ? "speakers" : "";
+  const modelLabel = record.model && record.model.includes("-diarize") ? "speakers" : "";
+  const partialLabel = record.duration_limit && record.duration_limit > 0 ? `first ${formatMinutes(record.duration_limit)}` : "";
   const wordsLabel = record.words ? `${record.words} words` : "";
-  const meta = [statusLabel, modelLabel, dur, wordsLabel, date].filter(Boolean).join(" \u00b7 ");
+  const meta = [statusLabel, modelLabel, partialLabel, dur, wordsLabel, date].filter(Boolean).join(" \u00b7 ");
 
   let actions = "";
   let quickCopy = "";
@@ -289,7 +298,8 @@ function renderActiveResult(data) {
     title: data.title || "Transcript",
     status: "done",
     duration: data.duration_seconds || 0,
-    model: "",
+    duration_limit: data.duration_limit || 0,
+    model: data.model || "",
     words: text.split(/\s+/).filter(Boolean).length,
     created_at: "",
   };
@@ -416,14 +426,25 @@ async function runSSE(fetchUrl, fetchBody) {
 const DEMO_MODE = new URLSearchParams(window.location.search).has("demo");
 const apiPrefix = DEMO_MODE ? "/api/demo" : "/api";
 
+function getDurationLimit() {
+  const toggle = document.getElementById("duration-toggle");
+  if (!toggle || !toggle.checked) return 0;
+  const val = parseInt(document.getElementById("duration-limit-input").value, 10);
+  return val > 0 ? val : 0;
+}
+
 async function startTranscription(url) {
   const diarize = document.getElementById("diarize-toggle").checked;
-  runSSE(`${apiPrefix}/transcribe`, { url, model: diarize ? "gpt-4o-transcribe-diarize" : "" });
+  const duration_limit = getDurationLimit();
+  const model = getTranscribeModel();
+  runSSE(`${apiPrefix}/transcribe`, { url, diarize, duration_limit, model });
 }
 
 function retranscribe(id) {
   const diarize = document.getElementById("diarize-toggle").checked;
-  runSSE(`${apiPrefix}/history/${id}/retranscribe`, { model: diarize ? "gpt-4o-transcribe-diarize" : "" });
+  const duration_limit = getDurationLimit();
+  const model = getTranscribeModel();
+  runSSE(`${apiPrefix}/history/${id}/retranscribe`, { diarize, duration_limit, model });
 }
 
 function handleEvent(event, data) {
@@ -449,6 +470,7 @@ function handleEvent(event, data) {
         text: data.text,
         title: data.title || "Transcript",
         duration_seconds: data.duration_seconds,
+        duration_limit: data.duration_limit || 0,
         message: "Done!",
       });
       break;
@@ -486,6 +508,24 @@ cancelBtn.addEventListener("click", () => {
 
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") transcribeBtn.click();
+});
+
+document.getElementById("duration-toggle").addEventListener("change", (e) => {
+  urlInput.blur();
+  const group = document.querySelector(".duration-input-group");
+  if (e.target.checked) {
+    group.classList.add("visible");
+  } else {
+    group.classList.remove("visible");
+  }
+});
+
+document.getElementById("diarize-toggle").addEventListener("change", () => {
+  urlInput.blur();
+});
+
+document.getElementById("duration-limit-input").addEventListener("focus", () => {
+  urlInput.blur();
 });
 
 // ─── History ───
@@ -691,7 +731,7 @@ async function generateSummary(id) {
     const res = await fetch(`${apiPrefix}/history/${id}/summarize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptText }),
+      body: JSON.stringify({ prompt: promptText, model: getSummarizeModel() }),
     });
 
     if (!res.ok) {
@@ -791,6 +831,60 @@ cleanupBtn.addEventListener("click", async () => {
   }
 });
 
+// ─── Provider selector ───
+
+let providers = [];
+let selectedProvider = null;
+
+const PROVIDER_COLORS = {
+  openai: "#4ade80",
+  gemini: "#60a5fa",
+};
+
+async function loadProviders() {
+  try {
+    const res = await fetch("/api/providers");
+    if (!res.ok) return;
+    const data = await res.json();
+    providers = data.providers || [];
+
+    if (providers.length < 2) return;
+
+    const stored = localStorage.getItem("tm_provider");
+    selectedProvider = providers.find(p => p.id === stored) || providers[0];
+
+    const el = document.getElementById("provider-selector");
+    el.hidden = false;
+    updateProviderUI();
+  } catch {
+    // Silently ignore
+  }
+}
+
+function updateProviderUI() {
+  const nameEl = document.querySelector(".provider-name");
+  const dotEl = document.querySelector(".provider-dot");
+  if (!selectedProvider || !nameEl) return;
+  nameEl.textContent = selectedProvider.label;
+  dotEl.style.background = PROVIDER_COLORS[selectedProvider.id] || PROVIDER_COLORS.openai;
+}
+
+function toggleProvider() {
+  if (providers.length < 2) return;
+  const idx = providers.findIndex(p => p.id === selectedProvider.id);
+  selectedProvider = providers[(idx + 1) % providers.length];
+  localStorage.setItem("tm_provider", selectedProvider.id);
+  updateProviderUI();
+}
+
+function getTranscribeModel() {
+  return selectedProvider?.transcribe_model || "";
+}
+
+function getSummarizeModel() {
+  return selectedProvider?.summarize_model || "";
+}
+
 // ─── Init ───
 
 if (DEMO_MODE) {
@@ -802,3 +896,4 @@ if (DEMO_MODE) {
 
 initWaveform();
 loadHistory();
+loadProviders();
