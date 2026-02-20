@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import router
@@ -18,7 +18,13 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        html = (STATIC_DIR / "index.html").read_text()
+        for name in ("app.js", "style.css"):
+            path = STATIC_DIR / name
+            if path.exists():
+                stamp = int(path.stat().st_mtime)
+                html = html.replace(f"/static/{name}", f"/static/{name}?v={stamp}")
+        return HTMLResponse(html)
 
     return app
 

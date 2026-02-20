@@ -43,6 +43,7 @@ const ICONS = {
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   sparkle: '🦄',
+  obsidian: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 18v-6"/><path d="M14 18v-3"/></svg>',
 };
 
 // ─── Helpers ───
@@ -63,6 +64,36 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+marked.setOptions({ breaks: true });
+function renderMarkdown(text) {
+  return marked.parse(text);
+}
+
+const speakerColors = ["#f8bbd0", "#64b5f6", "#c6d84a", "#ffb74d", "#ce93d8", "#4dd0e1", "#ff8a65", "#aed581"];
+function renderTranscript(text) {
+  return escapeHtml(text).replace(
+    /^([A-Z]):(\s)/gm,
+    (_, letter, sp) => {
+      const idx = letter.charCodeAt(0) - 65;
+      const color = speakerColors[idx % speakerColors.length];
+      return `<span class="speaker-label" style="color:${color}">${letter}:</span>${sp}`;
+    }
+  );
+}
+
+function formatObsidianDate(createdAt) {
+  if (!createdAt) return new Date().toISOString().slice(0, 10);
+  return new Date(createdAt + "Z").toISOString().slice(0, 10);
+}
+
+function escapeYamlString(str) {
+  if (!str) return '""';
+  if (/[:#"'|>\[\]{},%&!@`]/.test(str) || str.trim() !== str) {
+    return '"' + str.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  }
+  return str;
 }
 
 function formatDuration(seconds) {
@@ -255,6 +286,7 @@ function renderCard(record, opts = {}) {
     quickSummarize = `<button class="quick-summarize${record.has_summary ? " has-summary" : ""}" onclick="event.stopPropagation(); openSummarizePrompt('${record.id}')" title="${summarizeTitle}"><span class="unicorn-icon">${ICONS.sparkle}</span> Magic</button>`;
     quickCopy = `<button class="quick-copy" onclick="event.stopPropagation(); copyRecordText('${record.id}')" title="Copy">${ICONS.copy} Copy</button>`;
     actions = `
+      <button onclick="event.stopPropagation(); exportToObsidian('${record.id}')" title="Send to Obsidian">${ICONS.obsidian} Obsidian</button>
       <button onclick="event.stopPropagation(); downloadRecordText('${record.id}', '${escapeHtml(record.title)}')" title="Download .txt">${ICONS.download} .txt</button>
       <button onclick="event.stopPropagation(); revealInFinder('${record.id}')" title="Show in Finder">${ICONS.folder} Finder</button>
       <button onclick="event.stopPropagation(); retranscribe('${record.id}')" title="Re-transcribe">${ICONS.refresh} Re-transcribe</button>
@@ -270,7 +302,7 @@ function renderCard(record, opts = {}) {
 
   let bodyHtml = "";
   if (expanded && opts.bodyText) {
-    bodyHtml = `<div class="card-body" onclick="event.stopPropagation()">${escapeHtml(opts.bodyText)}</div>`;
+    bodyHtml = `<div class="card-body" onclick="event.stopPropagation()">${renderTranscript(opts.bodyText)}</div>`;
   }
 
   const hasSummary = record.has_summary ? "true" : "false";
@@ -335,16 +367,157 @@ async function copyRecordText(id) {
 }
 
 async function downloadRecordText(id, title) {
-  const text = await getRecordBody(id);
-  if (!text) return;
+  const card = document.querySelector(`.history-card[data-id="${id}"]`);
+  const activeTab = card?.querySelector(".card-tab.active");
+  const isSummary = activeTab?.dataset.tab === "summary";
+
+  let text;
+  let suffix;
+  if (isSummary) {
+    const data = await getRecordSummary(id);
+    if (!data?.summary) return;
+    text = data.summary;
+    suffix = "_summary";
+  } else {
+    text = await getRecordBody(id);
+    if (!text) return;
+    suffix = "";
+  }
   const blob = new Blob([text], { type: "text/plain" });
   const a = document.createElement("a");
   const objectUrl = URL.createObjectURL(blob);
   a.href = objectUrl;
   const filename = (title || "transcript").replace(/[^a-zA-Z0-9_\- ]/g, "").trim() || "transcript";
-  a.download = `${filename}.txt`;
+  a.download = `${filename}${suffix}.txt`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+}
+
+async function buildObsidianMarkdown(id) {
+  const card = document.querySelector(`.history-card[data-id="${id}"]`);
+  const activeTab = card?.querySelector(".card-tab.active");
+  const isSummary = activeTab?.dataset.tab === "summary";
+
+  const record = await getFullRecord(id);
+  if (!record) return null;
+
+  const lines = ["---"];
+  lines.push(`title: ${escapeYamlString(record.title || "")}`);
+  lines.push(`url: ${record.url || ""}`);
+  lines.push(`date: ${formatObsidianDate(record.created_at)}`);
+
+  let body;
+  if (isSummary) {
+    const data = await getRecordSummary(id);
+    if (!data?.summary) return null;
+    body = data.summary;
+    lines.push("type: summary");
+    lines.push(`model: ${record.model || ""}`);
+    if (record.duration) lines.push(`duration: ${formatDuration(record.duration)}`);
+    if (record.words) lines.push(`words: ${record.words}`);
+    lines.push(`prompt: ${escapeYamlString(data.prompt || "")}`);
+  } else {
+    body = record.body || await getRecordBody(id);
+    if (!body) return null;
+    lines.push("type: transcript");
+    lines.push(`model: ${record.model || ""}`);
+    if (record.duration) lines.push(`duration: ${formatDuration(record.duration)}`);
+    if (record.words) lines.push(`words: ${record.words}`);
+  }
+
+  lines.push("tags:");
+  lines.push("  - transcript-maker");
+  lines.push("---");
+  lines.push("");
+  lines.push(body);
+
+  return { markdown: lines.join("\n"), title: record.title, isSummary };
+}
+
+async function exportToObsidian(id) {
+  const vault = localStorage.getItem("tm_obsidian_vault");
+  if (!vault) {
+    showObsidianConfig(id);
+    return;
+  }
+
+  const result = await buildObsidianMarkdown(id);
+  if (!result) return;
+
+  await navigator.clipboard.writeText(result.markdown);
+
+  const subfolder = localStorage.getItem("tm_obsidian_subfolder") || "";
+  const filename = (result.title || "Untitled").replace(/[\\/:*?"<>|]/g, "-").trim();
+  const filePath = subfolder ? `${subfolder}/${filename}` : filename;
+
+  const uri = `obsidian://new?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(filePath)}&clipboard&overwrite`;
+  window.location.href = uri;
+
+  showToast("Sent to Obsidian");
+}
+
+function showObsidianConfig(id) {
+  // If already open, close it
+  const existing = document.querySelector(".obsidian-modal");
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  const savedVault = localStorage.getItem("tm_obsidian_vault") || "";
+  const savedSubfolder = localStorage.getItem("tm_obsidian_subfolder") || "";
+
+  const modal = document.createElement("div");
+  modal.className = "obsidian-modal";
+  modal.innerHTML = `
+    <div class="obsidian-modal-backdrop"></div>
+    <div class="obsidian-modal-content">
+      <div class="obsidian-config-hint">Enter your Obsidian vault name and an optional folder path. This is a one-time setup — your choice will be remembered for all future exports.</div>
+      <div class="obsidian-path-bar">
+        <input type="text" class="obsidian-vault-input" placeholder="Vault name" value="${escapeHtml(savedVault)}" />
+        <span class="obsidian-path-sep">/</span>
+        <input type="text" class="obsidian-subfolder-input" placeholder="folder/path (optional)" value="${escapeHtml(savedSubfolder)}" />
+        <button class="obsidian-connect-btn" onclick="saveObsidianConfig('${id}')">Connect</button>
+        <button class="obsidian-cancel-btn" onclick="document.querySelector('.obsidian-modal').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  modal.querySelector(".obsidian-modal-backdrop").addEventListener("click", () => modal.remove());
+
+  document.body.appendChild(modal);
+  modal.querySelector(".obsidian-vault-input").focus();
+}
+
+function saveObsidianConfig(id) {
+  const modal = document.querySelector(".obsidian-modal");
+  if (!modal) return;
+
+  const vaultInput = modal.querySelector(".obsidian-vault-input");
+  const subfolderInput = modal.querySelector(".obsidian-subfolder-input");
+  const vault = vaultInput?.value.trim();
+  const subfolder = subfolderInput?.value.trim();
+
+  if (!vault) {
+    vaultInput.focus();
+    return;
+  }
+
+  localStorage.setItem("tm_obsidian_vault", vault);
+  if (subfolder) {
+    localStorage.setItem("tm_obsidian_subfolder", subfolder);
+  } else {
+    localStorage.removeItem("tm_obsidian_subfolder");
+  }
+
+  modal.remove();
+  exportToObsidian(id);
+}
+
+function clearObsidianConfig() {
+  localStorage.removeItem("tm_obsidian_vault");
+  localStorage.removeItem("tm_obsidian_subfolder");
+  showToast("Obsidian vault config cleared");
 }
 
 async function getRecordBody(id) {
@@ -355,6 +528,12 @@ async function getRecordBody(id) {
   const body = data.body || "";
   bodyCache.set(id, body);
   return body;
+}
+
+async function getFullRecord(id) {
+  const res = await fetch(`/api/history/${id}`);
+  if (!res.ok) return null;
+  return await res.json();
 }
 
 // ─── Transcription ───
@@ -605,7 +784,7 @@ async function toggleCardBody(id, cardEl) {
       const bodyDiv = document.createElement("div");
       bodyDiv.className = "card-body";
       bodyDiv.style.display = "none";
-      bodyDiv.textContent = body;
+      bodyDiv.innerHTML = renderTranscript(body);
       bodyDiv.addEventListener("click", (e) => e.stopPropagation());
       cardEl.appendChild(bodyDiv);
 
@@ -614,7 +793,7 @@ async function toggleCardBody(id, cardEl) {
     } else {
       const div = document.createElement("div");
       div.className = "card-body";
-      div.textContent = body;
+      div.innerHTML = renderTranscript(body);
       div.addEventListener("click", (e) => e.stopPropagation());
       cardEl.appendChild(div);
     }
@@ -653,7 +832,7 @@ function buildSummaryDiv(summaryText) {
   const div = document.createElement("div");
   div.className = "card-summary";
   div.addEventListener("click", (e) => e.stopPropagation());
-  div.innerHTML = `<div class="card-summary-text">${escapeHtml(summaryText)}</div>`;
+  div.innerHTML = `<div class="card-summary-text">${renderMarkdown(summaryText)}</div>`;
   return div;
 }
 
@@ -695,7 +874,7 @@ function addPromptUI(id, card) {
   prompt.addEventListener("click", (e) => e.stopPropagation());
   prompt.innerHTML = `
     <div class="summarize-bar">
-      <textarea class="summarize-input" rows="2">Summarize this transcript concisely, highlighting key points and main topics discussed.</textarea>
+      <textarea class="summarize-input" rows="2">${localStorage.getItem("tm_summarize_prompt") || "Summarize this transcript concisely, highlighting key points and main topics discussed."}</textarea>
       <div class="summarize-bar-actions">
         <button class="summarize-generate-btn" onclick="generateSummary('${id}')">
           <span>Generate</span>
@@ -740,6 +919,7 @@ async function generateSummary(id) {
     }
 
     const data = await res.json();
+    localStorage.setItem("tm_summarize_prompt", promptText);
     summaryCache.set(id, data);
     card.dataset.hasSummary = "true";
 
@@ -811,6 +991,7 @@ cleanupBtn.addEventListener("click", async () => {
     const res = await fetch("/api/cleanup", { method: "POST" });
     if (res.ok) {
       const data = await res.json();
+      clearObsidianConfig();
       cleanupBtn.textContent = `Done! ${data.deleted_files} files, ${data.cleaned_records} records`;
       setTimeout(() => {
         cleanupBtn.textContent = "Clean up temp files";
