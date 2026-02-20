@@ -58,23 +58,25 @@
 
 ## Quick Start
 
-**Prerequisites:** Python 3.11+, [Poetry](https://python-poetry.org/docs/#installation), [ffmpeg](https://ffmpeg.org/) (`brew install ffmpeg` / `apt install ffmpeg`), and an [OpenAI API key](https://platform.openai.com/api-keys).
+**Prerequisites:** Python 3.11+, [Poetry](https://python-poetry.org/docs/#installation), [ffmpeg](https://ffmpeg.org/) (`brew install ffmpeg` / `apt install ffmpeg`), and an API key from [OpenAI](https://platform.openai.com/api-keys) or [Google](https://aistudio.google.com/apikey) (or both).
 
 ```bash
 git clone https://github.com/dmitry-kostin/transcript-maker.git
 cd transcript-maker
 poetry install
 
-# Configure API key (pick one)
-export TM_OPENAI_API_KEY=sk-...          # shell variable
-echo "TM_OPENAI_API_KEY=sk-..." > .env   # or .env file
+# Configure at least one provider (.env file or shell exports)
+# OpenAI — for Whisper transcription + GPT summarization
+echo "TM_OPENAI_API_KEY=sk-..." >> .env
 
-# Optional: add Gemini support
-export GOOGLE_API_KEY=AIza...             # no TM_ prefix
+# Google Gemini — for Gemini transcription + summarization
+echo "GOOGLE_API_KEY=AIza..." >> .env        # no TM_ prefix
 
 # Start the server
 poetry run python run.py
 ```
+
+You need at least one API key (OpenAI or Google) — both are optional individually. When both keys are configured, a provider selector appears in the UI to switch between them. Demo mode (`?demo`) works without any API keys.
 
 Open http://127.0.0.1:8000 in your browser.
 
