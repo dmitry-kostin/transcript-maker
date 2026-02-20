@@ -19,13 +19,16 @@ const urlInput = document.getElementById("url-input");
 const transcribeBtn = document.getElementById("transcribe-btn");
 const cancelBtn = document.getElementById("cancel-btn");
 const progressEl = document.getElementById("progress");
-const waveformEl = document.getElementById("waveform");
+const waveformSvg = document.getElementById("waveform-svg");
+const waveformGlow = document.querySelector(".waveform-glow");
 const progressStatus = document.getElementById("progress-status");
 const activeResultEl = document.getElementById("active-result");
 const errorEl = document.getElementById("error");
 const historyList = document.getElementById("history-list");
 const toastEl = document.getElementById("toast");
 const cleanupBtn = document.getElementById("cleanup-btn");
+const diarizeToggle = document.getElementById("diarize-toggle");
+const durationToggle = document.getElementById("duration-toggle");
 
 let abortController = null;
 let pollTimer = null;
@@ -111,6 +114,14 @@ function formatMinutes(seconds) {
   return `${m}m`;
 }
 
+function formatEta(seconds) {
+  if (!seconds || seconds <= 0) return "";
+  if (seconds < 60) return `~ ${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `~ ${m}m ${s}s` : `~ ${m}m`;
+}
+
 // ─── State management ───
 
 function setState(newState, data = {}) {
@@ -123,8 +134,11 @@ function setState(newState, data = {}) {
   // Processing controls
   const isActive = [AppState.DOWNLOADING, AppState.PROCESSING, AppState.TRANSCRIBING].includes(newState);
   transcribeBtn.hidden = isActive;
+  transcribeBtn.disabled = isActive;
   cancelBtn.hidden = !isActive;
   urlInput.disabled = isActive;
+  diarizeToggle.disabled = isActive;
+  durationToggle.disabled = isActive;
 
   // Progress section
   if (isActive) {
@@ -158,93 +172,276 @@ function setState(newState, data = {}) {
 function resetUI() {
   progressEl.hidden = true;
   progressStatus.textContent = "";
-  waveformEl.className = "waveform stopped";
+  stopWaveAnimation();
   activeResultEl.innerHTML = "";
   activeRecordId = null;
   errorEl.hidden = true;
   errorEl.textContent = "";
 }
 
-// ─── Waveform controller ───
+// ─── Liquid Wave Engine ───
 
-const BAR_COUNT = 48;
+const WAVE_POINTS = 80;
+const SVG_W = 640;
+const SVG_H = 128;
+const CENTER_Y = SVG_H / 2;
+const LERP_AMP = 0.06;
+const LERP_SPEED_RATE = 0.03;
+const LERP_COLOR = 0.035;
+const LERP_JAGGED = 0.02;
+const REFLECTION_AMP = 0.6;
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+const WAVE_STATES = {
+  stopped:      { amp: [4, 3, 2],       freq: [2.5, 3.0, 2.0], speed: [0.008, 0.006, 0.01],     color: [128,128,128], glow: 0 },
+  downloading:  { amp: [38, 28, 18],    freq: [2.5, 3.0, 2.0], speed: [0.015, 0.012, 0.018],   color: [232,165,66],  glow: 0.4 },
+  processing:   { amp: [30, 22, 14],    freq: [2.5, 3.0, 2.0], speed: [-0.04, -0.032, -0.045], color: [108,142,239], glow: 0.4 },
+  transcribing: { amp: [34, 25, 16],    freq: [2.5, 3.0, 2.0], speed: [-0.04, -0.032, -0.045], color: [108,142,239], glow: 0.45 },
+  done:         { amp: [5, 3.5, 2],     freq: [2.5, 3.0, 2.0], speed: [0.008, 0.006, 0.01],    color: [74,222,128],  glow: 0.5 },
+  error:        { amp: [2, 1, 0.5],     freq: [8, 10, 6],      speed: [0.06, 0.05, 0.07],      color: [248,113,113], glow: 0.3 },
+};
+
+// Current interpolated wave params
+const BASE_FREQ = [2.5, 3.0, 2.0];
+let waveParams = {
+  amp: [2, 1.5, 1],
+  freq: [...BASE_FREQ],
+  speed: [0.008, 0.006, 0.01],
+  color: [128, 128, 128],
+  glow: 0,
+  phase: [0, Math.PI * 0.7, Math.PI * 1.4],
+};
+let waveTarget = { ...WAVE_STATES.stopped };
+let waveRafId = null;
+let waveRunning = false;
+let jaggedMix = 0;
+let jaggedTarget = 0;
+let lastFrameTime = 0;
+let isIdleThrottle = true;
+
+// SVG path element refs
+const wavePaths = {
+  secondaryUpper: document.getElementById("wave-secondary-upper"),
+  secondaryLower: document.getElementById("wave-secondary-lower"),
+  primaryUpper:   document.getElementById("wave-primary-upper"),
+  primaryLower:   document.getElementById("wave-primary-lower"),
+  tertiaryUpper:  document.getElementById("wave-tertiary-upper"),
+  tertiaryLower:  document.getElementById("wave-tertiary-lower"),
+};
+
+function lerp(a, b, t) { return a + (b - a) * t; }
 
 function initWaveform() {
-  waveformEl.innerHTML = "";
-  for (let i = 0; i < BAR_COUNT; i++) {
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    // Set random peak heights for organic feel
-    const peak = 40 + Math.random() * 16; // 40-56px
-    bar.style.setProperty("--peak", `${peak}px`);
-    bar.style.height = "6px";
-    waveformEl.appendChild(bar);
-  }
-  waveformEl.className = "waveform stopped";
-}
-
-function updateWaveform(state, data = {}) {
-  const bars = waveformEl.children;
-
-  if (state === AppState.DOWNLOADING) {
-    waveformEl.className = "waveform downloading";
-    for (let i = 0; i < bars.length; i++) {
-      // Left-to-right cascade
-      bars[i].style.animationDelay = `${(i * (2.8 / BAR_COUNT)).toFixed(3)}s`;
-      const peak = 40 + Math.random() * 16;
-      bars[i].style.setProperty("--peak", `${peak}px`);
-    }
-  } else if (state === AppState.PROCESSING || state === AppState.TRANSCRIBING) {
-    waveformEl.className = "waveform transcribing";
-    const center = (BAR_COUNT - 1) / 2;
-    for (let i = 0; i < bars.length; i++) {
-      // Center-outward ripple
-      const dist = Math.abs(i - center);
-      bars[i].style.animationDelay = `${(dist * 0.06).toFixed(3)}s`;
-      // Taller bars at center
-      const peak = 56 - (dist / center) * 24;
-      bars[i].style.setProperty("--peak", `${peak}px`);
-    }
-  } else if (state === AppState.DONE) {
-    waveformEl.className = "waveform done";
-    const center = (BAR_COUNT - 1) / 2;
-    for (let i = 0; i < bars.length; i++) {
-      const dist = Math.abs(i - center) / center;
-      const h = 12 + 44 * (1 - dist * dist); // Parabolic arc
-      bars[i].style.height = `${h.toFixed(1)}px`;
-      bars[i].style.animationDelay = `${(i * 0.015).toFixed(3)}s`;
-    }
-  } else if (state === AppState.ERROR) {
-    waveformEl.className = "waveform error";
-  } else if (state === AppState.CANCELLED || state === AppState.IDLE) {
-    waveformEl.className = "waveform stopped";
+  waveParams = {
+    amp: [2, 1.5, 1],
+    freq: [...BASE_FREQ],
+    speed: [0.008, 0.006, 0.01],
+    color: [128, 128, 128],
+    glow: 0,
+    phase: [0, Math.PI * 0.7, Math.PI * 1.4],
+  };
+  waveTarget = { ...WAVE_STATES.stopped };
+  jaggedMix = 0;
+  jaggedTarget = 0;
+  isIdleThrottle = true;
+  updateGlow(0, [128, 128, 128]);
+  if (!waveRunning) {
+    waveRunning = true;
+    lastFrameTime = performance.now();
+    waveRafId = requestAnimationFrame(animateWave);
   }
 }
 
-function updateChunkProgress(current, total) {
-  const bars = waveformEl.children;
-  const barsPerChunk = Math.floor(BAR_COUNT / total);
-  const completedBars = current * barsPerChunk;
+function updateWaveform(state) {
+  const stateKey =
+    state === AppState.DOWNLOADING  ? "downloading" :
+    state === AppState.PROCESSING   ? "processing" :
+    state === AppState.TRANSCRIBING ? "transcribing" :
+    state === AppState.DONE         ? "done" :
+    state === AppState.ERROR        ? "error" : "stopped";
 
-  const center = (BAR_COUNT - 1) / 2;
-  for (let i = 0; i < bars.length; i++) {
-    if (i < completedBars) {
-      bars[i].style.background = "var(--green)";
-      bars[i].style.animation = "none";
-      bars[i].style.opacity = "0.8";
-      const dist = Math.abs(i - center) / center;
-      const h = 56 - dist * 24;
-      bars[i].style.height = `${h.toFixed(1)}px`;
+  isIdleThrottle = stateKey === "stopped" || stateKey === "done";
+
+  if (stateKey === "done") {
+    // Done bloom: spike amplitude, then let lerp settle
+    waveTarget = { ...WAVE_STATES.done };
+    waveParams.amp = [55, 42, 28];
+    jaggedMix = 0;
+    jaggedTarget = 0;
+    // Brightness flash
+    setTimeout(() => {
+      waveformSvg.classList.add("flash");
+      setTimeout(() => {
+        waveformSvg.classList.remove("flash");
+        waveformSvg.classList.add("flash-decay");
+        setTimeout(() => waveformSvg.classList.remove("flash-decay"), 600);
+      }, 150);
+    }, 330);
+  } else if (stateKey === "error") {
+    // Error burst: spike amplitude + jagged, then decay
+    waveTarget = { ...WAVE_STATES.error };
+    waveParams.freq = [...waveTarget.freq];
+    waveParams.amp = [40, 28, 18];
+    jaggedMix = 1;
+    jaggedTarget = 0;
+  } else {
+    waveTarget = { ...WAVE_STATES[stateKey] };
+    jaggedTarget = 0;
+  }
+
+  updateGlow(waveTarget.glow, waveTarget.color);
+}
+
+function updateGlow(opacity, color) {
+  if (!waveformGlow) return;
+  if (opacity > 0) {
+    waveformGlow.style.background = `rgba(${color[0]},${color[1]},${color[2]},0.3)`;
+    waveformGlow.style.opacity = opacity;
+  } else {
+    waveformGlow.style.opacity = 0;
+  }
+}
+
+function updateGradientColors(color) {
+  const upperStops = document.querySelectorAll("#wave-grad-upper stop");
+  const lowerStops = document.querySelectorAll("#wave-grad-lower stop");
+  const rgb = `rgb(${color[0]},${color[1]},${color[2]})`;
+  upperStops.forEach(s => s.setAttribute("stop-color", rgb));
+  lowerStops.forEach(s => s.setAttribute("stop-color", rgb));
+}
+
+function animateWave(now) {
+  if (!waveRunning) return;
+
+  // Throttle to ~20fps when idle
+  if (isIdleThrottle && now - lastFrameTime < 50) {
+    waveRafId = requestAnimationFrame(animateWave);
+    return;
+  }
+  lastFrameTime = now;
+
+  // Reduced motion: render one static frame
+  if (prefersReducedMotion.matches) {
+    renderStaticWave();
+    return;
+  }
+
+  // Lerp params toward targets
+  for (let i = 0; i < 3; i++) {
+    waveParams.amp[i]   = lerp(waveParams.amp[i],   waveTarget.amp[i],   LERP_AMP);
+    waveParams.speed[i] = lerp(waveParams.speed[i], waveTarget.speed[i], LERP_SPEED_RATE);
+    waveParams.phase[i] += waveParams.speed[i];
+    waveParams.color[i] = lerp(waveParams.color[i], waveTarget.color[i], LERP_COLOR);
+  }
+  waveParams.glow = lerp(waveParams.glow, waveTarget.glow, LERP_COLOR);
+  jaggedMix = lerp(jaggedMix, jaggedTarget, LERP_JAGGED);
+
+  updateGradientColors(waveParams.color);
+
+  // Generate paths for 3 layers
+  const layers = [
+    { upper: wavePaths.primaryUpper,   lower: wavePaths.primaryLower,   idx: 0 },
+    { upper: wavePaths.secondaryUpper, lower: wavePaths.secondaryLower, idx: 1 },
+    { upper: wavePaths.tertiaryUpper,  lower: wavePaths.tertiaryLower,  idx: 2 },
+  ];
+
+  for (const layer of layers) {
+    const amp = waveParams.amp[layer.idx];
+    const freq = waveParams.freq[layer.idx];
+    const phase = waveParams.phase[layer.idx];
+
+    const upperPoints = generateWavePoints(amp, freq, phase);
+    const lowerPoints = upperPoints.map(p => ({
+      x: p.x,
+      y: CENTER_Y + (CENTER_Y - p.y) * REFLECTION_AMP,
+    }));
+
+    layer.upper.setAttribute("d", buildSmoothPath(upperPoints));
+    layer.lower.setAttribute("d", buildSmoothPath(lowerPoints));
+  }
+
+  waveRafId = requestAnimationFrame(animateWave);
+}
+
+function generateWavePoints(amp, freq, phase) {
+  const points = [];
+  for (let i = 0; i < WAVE_POINTS; i++) {
+    const t = i / (WAVE_POINTS - 1);
+    const x = t * SVG_W;
+
+    // Edge tapering window — exponent concentrates energy in center
+    const window = Math.pow(Math.sin(Math.PI * t), 3.0);
+
+    // Primary sine + harmonics
+    let y = Math.sin(t * Math.PI * 2 * freq + phase) * amp;
+    y += Math.sin(t * Math.PI * 2 * freq * 2.1 + phase * 1.3) * amp * 0.15;
+    y += Math.sin(t * Math.PI * 2 * freq * 0.5 + phase * 0.7) * amp * 0.1;
+
+    // Jagged noise for error state
+    if (jaggedMix > 0.01) {
+      const noise = Math.sin(t * 47 + phase * 3) * amp * 0.6
+                   + Math.sin(t * 23 + phase * 7) * amp * 0.3;
+      y += noise * jaggedMix;
     }
+
+    y *= window;
+    points.push({ x, y: CENTER_Y - y });
+  }
+  return points;
+}
+
+function buildSmoothPath(points) {
+  if (points.length < 2) return "";
+
+  // Catmull-Rom to cubic bezier conversion
+  let d = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
   }
 
-  // Transition bars: blend static green into pulsing blue
-  const transitionBars = 3;
-  for (let i = completedBars; i < Math.min(completedBars + transitionBars, bars.length); i++) {
-    const t = (i - completedBars) / transitionBars;
-    const minH = 10 + (1 - t) * 20;
-    bars[i].style.setProperty("--min", `${minH.toFixed(1)}px`);
+  // Close path to center line for gradient fill
+  d += ` L${SVG_W},${CENTER_Y} L0,${CENTER_Y} Z`;
+
+  return d;
+}
+
+function renderStaticWave() {
+  // Single static frame for reduced-motion
+  updateGradientColors(waveTarget.color);
+  const layers = [
+    { upper: wavePaths.primaryUpper,   lower: wavePaths.primaryLower,   idx: 0 },
+    { upper: wavePaths.secondaryUpper, lower: wavePaths.secondaryLower, idx: 1 },
+    { upper: wavePaths.tertiaryUpper,  lower: wavePaths.tertiaryLower,  idx: 2 },
+  ];
+  for (const layer of layers) {
+    const amp = waveTarget.amp[layer.idx] * 0.5;
+    const points = generateWavePoints(amp, waveTarget.freq[layer.idx], layer.idx * 1.2);
+    const lowerPts = points.map(p => ({ x: p.x, y: CENTER_Y + (CENTER_Y - p.y) * REFLECTION_AMP }));
+    layer.upper.setAttribute("d", buildSmoothPath(points));
+    layer.lower.setAttribute("d", buildSmoothPath(lowerPts));
   }
+}
+
+function stopWaveAnimation() {
+  waveRunning = false;
+  if (waveRafId) {
+    cancelAnimationFrame(waveRafId);
+    waveRafId = null;
+  }
+  // Clear all paths
+  Object.values(wavePaths).forEach(p => { if (p) p.setAttribute("d", ""); });
+  updateGlow(0, [128, 128, 128]);
 }
 
 // ─── Toast ───
@@ -540,6 +737,8 @@ async function getFullRecord(id) {
 
 async function runSSE(fetchUrl, fetchBody) {
   resetUI();
+  lastHistoryIds = "";
+  loadHistory();
   initWaveform();
   setState(AppState.DOWNLOADING, { message: "Downloading audio..." });
   abortController = new AbortController();
@@ -596,8 +795,11 @@ async function runSSE(fetchUrl, fetchBody) {
   } finally {
     abortController = null;
     transcribeBtn.hidden = false;
+    transcribeBtn.disabled = false;
     cancelBtn.hidden = true;
     urlInput.disabled = false;
+    diarizeToggle.disabled = false;
+    durationToggle.disabled = false;
     loadHistory();
   }
 }
@@ -634,12 +836,8 @@ function handleEvent(event, data) {
       } else if (data.stage === "processing") {
         setState(AppState.PROCESSING, { message: data.message });
       } else if (data.stage === "transcribing") {
-        setState(AppState.TRANSCRIBING, { message: data.message });
-        // Parse chunk progress
-        const match = data.message.match(/chunk (\d+) of (\d+)/);
-        if (match) {
-          updateChunkProgress(parseInt(match[1]) - 1, parseInt(match[2]));
-        }
+        const eta = data.eta_seconds ? ` ${formatEta(data.eta_seconds)}` : "";
+        setState(AppState.TRANSCRIBING, { message: data.message + eta });
       }
       break;
 
@@ -663,6 +861,8 @@ function handleEvent(event, data) {
 // ─── Event listeners ───
 
 transcribeBtn.addEventListener("click", () => {
+  const busy = [AppState.DOWNLOADING, AppState.PROCESSING, AppState.TRANSCRIBING].includes(currentState);
+  if (busy) return;
   const url = urlInput.value.trim();
   if (!url) return;
   if (!DEMO_MODE && !isYouTubeUrl(url)) {
@@ -680,8 +880,11 @@ cancelBtn.addEventListener("click", () => {
     abortController.abort();
     setState(AppState.CANCELLED, { message: "Cancelled." });
     transcribeBtn.hidden = false;
+    transcribeBtn.disabled = false;
     cancelBtn.hidden = true;
     urlInput.disabled = false;
+    diarizeToggle.disabled = false;
+    durationToggle.disabled = false;
   }
 });
 
@@ -1075,6 +1278,5 @@ if (DEMO_MODE) {
   document.body.appendChild(badge);
 }
 
-initWaveform();
 loadHistory();
 loadProviders();

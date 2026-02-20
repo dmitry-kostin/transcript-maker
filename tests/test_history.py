@@ -7,6 +7,7 @@ from app.history import (
     cleanup_stale_records,
     save_audio, get_audio_path, find_cached_audio_by_url,
     save_summary, get_summary, delete_summary,
+    load_chunk_cache, save_chunk_cache, delete_chunk_cache,
 )
 
 
@@ -434,3 +435,72 @@ class TestSummaryCRUD:
         save_summary(rid, "Summary")
         record = get_record(rid)
         assert record["has_summary"] is True
+
+
+class TestChunkCache:
+    def test_save_and_load(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        parts = ["chunk 0 text", "chunk 1 text"]
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, parts)
+        loaded = load_chunk_cache(rid, "gemini-3-flash-preview", False, 5)
+        assert loaded == parts
+
+    def test_load_missing_returns_empty(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+
+    def test_invalidated_by_model_change(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        assert load_chunk_cache(rid, "gpt-4o-transcribe", False, 5) == []
+
+    def test_invalidated_by_diarize_change(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", True, 5) == []
+
+    def test_invalidated_by_total_change(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 3) == []
+
+    def test_delete(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        delete_chunk_cache(rid)
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+
+    def test_delete_nonexistent_is_safe(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        delete_chunk_cache(rid)  # Should not raise
+
+    def test_delete_invalid_id_is_safe(self, tmp_results):
+        delete_chunk_cache("not-hex!")  # Should not raise
+
+    def test_delete_record_cascades_to_chunk_cache(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        delete_record(rid)
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+
+    def test_chunk_cache_not_in_history_glob(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        records = get_history()
+        assert len(records) == 1
+        assert records[0]["id"] == rid
+
+    def test_incremental_save(self, tmp_results):
+        """Simulate saving after each chunk completes."""
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        save_chunk_cache(rid, "model", False, 3, ["part0"])
+        save_chunk_cache(rid, "model", False, 3, ["part0", "part1"])
+        save_chunk_cache(rid, "model", False, 3, ["part0", "part1", "part2"])
+        loaded = load_chunk_cache(rid, "model", False, 3)
+        assert loaded == ["part0", "part1", "part2"]
+
+    def test_corrupt_json_returns_empty(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        cache_path = tmp_results / f"{rid}_chunks.json"
+        cache_path.write_text("not valid json", encoding="utf-8")
+        assert load_chunk_cache(rid, "model", False, 5) == []

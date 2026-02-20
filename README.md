@@ -29,10 +29,10 @@
 - **Multi-provider support** — OpenAI + Google Gemini (via OpenAI-compatible endpoint, zero extra deps)
 - **Provider selector** — toggle between providers in the UI, persisted to localStorage
 - **Duration limit** — transcribe only the first N minutes of a video
-- **Audio caching** — re-transcriptions and same-URL transcriptions skip re-download
+- **Audio & chunk caching** — re-transcriptions skip re-download; interrupted multi-chunk transcriptions resume from where they left off
 - **Re-transcribe** — re-run any completed or failed transcription, optionally switching models
 - **Expandable history** — click any completed transcript to preview the text inline
-- **Real-time progress** streamed to the browser via Server-Sent Events
+- **Real-time progress with ETA** — streamed to the browser via Server-Sent Events, with per-chunk timing and estimated time remaining
 - **Cancel** an in-progress transcription from the UI
 - **History** with status tracking — persists across page refreshes and server restarts
 - **Show in Finder** — reveal any saved transcript file on disk
@@ -114,7 +114,7 @@ transcript-maker/
 ├── .gitignore
 ├── app/
 │   ├── __init__.py
-│   ├── main.py             # FastAPI app factory + static mount
+│   ├── main.py             # FastAPI app factory, logging setup, startup log
 │   ├── config.py           # pydantic-settings (env vars)
 │   ├── api.py              # API routes (transcribe + history endpoints)
 │   ├── clients.py          # Shared OpenAI/Gemini client helpers
@@ -182,7 +182,7 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
 
 | Event | Payload | When |
 |---|---|---|
-| `progress` | `{"stage": "...", "message": "...", "record_id": "..."}` | Each pipeline stage |
+| `progress` | `{"stage": "...", "message": "...", "record_id": "...", "chunk": N, "chunks_total": N, "eta_seconds": N}` | Each pipeline stage (chunk/eta fields during transcription) |
 | `transcript` | `{"text": "...", "title": "...", "duration_seconds": N, "duration_limit": N, "model": "...", "record_id": "..."}` | Transcription complete |
 | `error` | `{"message": "...", "record_id": "..."}` | On failure |
 | `done` | `{}` | Stream finished |
@@ -302,11 +302,11 @@ Records are sorted newest-first by `created_at`.
 4. **Create record** — write `.md` file with `status: in_progress` and selected model
 5. **Truncate** — if `duration_limit` is set, ffmpeg trims audio to the specified length
 6. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)
-7. **Transcribe** — send each chunk to OpenAI Whisper or Gemini API sequentially (using selected model)
+7. **Transcribe** — send each chunk to OpenAI Whisper or Gemini API sequentially; completed chunks are cached so interrupted transcriptions can resume
 8. **Complete** — update `.md` to `status: done`, write transcript as body
 9. **Cleanup** — delete temporary audio files
 
-On error at any step, the record is updated to `status: error`. On client disconnect, the record stays `in_progress` (no partial saves).
+On error at any step, the record is updated to `status: error`. On client disconnect, the record stays `in_progress` (no partial saves). Completed chunks are cached in `{record_id}_chunks.json` — on the next attempt, already-transcribed chunks are skipped.
 
 ## History & Persistence
 
@@ -336,6 +336,8 @@ Video title is prepended as the first line of both the transcript body and summa
 **Summary sidecar:** `{record_id}_summary.md` — stores AI-generated summary with YAML frontmatter (`prompt`, `created_at`) and summary text as body. Deleted automatically when the parent record is deleted.
 
 **Audio cache:** `{record_id}.mp3` — cached audio file, reused by retranscribe. Deleted automatically when the parent record is deleted.
+
+**Chunk cache:** `{record_id}_chunks.json` — stores completed chunk transcriptions as JSON for resume. Cache key is a SHA256 hash of model + diarize + chunk count; invalidated when any parameter changes. Deleted on successful completion or when the parent record is deleted.
 
 **Status lifecycle:** `in_progress` → `done` | `error`
 

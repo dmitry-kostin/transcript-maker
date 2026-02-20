@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -11,6 +12,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_SIZE_MB = 25.0
+MAX_GEMINI_RETRIES = 3
 MAX_CHUNK_DURATION_SECONDS = 1200  # Whisper API rejects >1400s; use 1200s safety margin
 
 
@@ -188,28 +190,41 @@ async def _transcribe_gemini(chunk_path: Path, model: str, diarize: bool) -> str
             "Do not add speaker labels, headings, markdown formatting, or line breaks between sentences."
         )
 
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": audio_data,
-                            "format": "mp3",
+    for attempt in range(1, MAX_GEMINI_RETRIES + 1):
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": audio_data,
+                                "format": "mp3",
+                            },
                         },
-                    },
-                ],
-            },
-        ],
-        temperature=0.0,
-    )
-    text = response.choices[0].message.content.strip()
-    logger.info("Gemini chunk complete (%d words, diarize=%s)", len(text.split()), diarize)
-    return text
+                    ],
+                },
+            ],
+            temperature=0.0,
+        )
+        content = response.choices[0].message.content
+        if content:
+            text = content.strip()
+            logger.info("Gemini chunk complete (%d words, diarize=%s)", len(text.split()), diarize)
+            return text
+
+        finish_reason = response.choices[0].finish_reason if response.choices else "no_choices"
+        logger.warning(
+            "Gemini returned empty content for %s (attempt %d/%d, finish_reason=%s)",
+            chunk_path.name, attempt, MAX_GEMINI_RETRIES, finish_reason,
+        )
+        if attempt < MAX_GEMINI_RETRIES:
+            await asyncio.sleep(2 ** (attempt - 1))
+
+    raise RuntimeError(f"Gemini returned empty content for {chunk_path.name} after {MAX_GEMINI_RETRIES} attempts")
 
 
 def cleanup_temp_files(audio_path: Path) -> None:

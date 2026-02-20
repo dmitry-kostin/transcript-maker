@@ -26,7 +26,7 @@
 - History records are real (written to `results/`), retranscribe works too
 
 ## Architecture
-- FastAPI app with SSE-based transcription pipeline: download → chunk → transcription API → save
+- FastAPI app with SSE-based transcription pipeline: download → chunk → transcription API → save (with chunk cache for resume)
 - History stored as markdown files with YAML frontmatter in `results/` — no database
 - AI summarization via Chat Completions API (OpenAI or Gemini) — summaries stored as sidecar files `results/{record_id}_summary.md`
 - Frontend is vanilla HTML/CSS/JS in `app/static/` — no build step
@@ -35,13 +35,18 @@
 - Record IDs: 8-char hex from `uuid4().hex[:8]`, validated via regex before any file op
 - `_resolve_path()` in `history.py`: validates ID format + glob lookup + path traversal guard
 - SSE generators in `api.py`: yield progress events, handle client disconnect, `finally` marks interrupted records as failed
+- SSE progress events include `chunk`, `chunks_total`, and `eta_seconds` fields during transcription (ETA from rolling average of per-chunk times)
 - `complete_record()` / `fail_record()` rebuild the full YAML meta dict from parsed record — always include all fields
 - `_write_md()` uses `sort_keys=False` to preserve frontmatter key order
 - Audio cached in `results/{record_id}.mp3` after download — reused by retranscribe and same-URL re-transcriptions, deleted with record
 - `find_cached_audio_by_url()` in `history.py`: scans existing records to skip re-download when the same URL is transcribed again
 - Summary sidecar: `results/{record_id}_summary.md` with YAML frontmatter (prompt, created_at) + body
-- `delete_record()` cascades to delete summary sidecar + audio cache
+- `delete_record()` cascades to delete summary sidecar, audio cache, and chunk cache
 - Video title prepended as first line of transcript and summary body in `api.py` (all codepaths: transcribe, demo, retranscribe, summarize, demo summarize)
+- Chunk cache sidecar: `results/{record_id}_chunks.json` — stores completed chunk transcriptions for resume after interruption
+- `_chunk_cache_key()` hashes `model|diarize|total` (SHA256, 16-char prefix) — cache invalidated when any parameter changes
+- `load_chunk_cache()` / `save_chunk_cache()` / `delete_chunk_cache()` in `history.py` manage the chunk cache lifecycle
+- Chunk cache saved after each chunk completes; deleted on successful transcription completion
 
 ## Transcription Models
 - `gpt-4o-transcribe` (default) — OpenAI Whisper, plain text output
@@ -51,6 +56,7 @@
 - Model resolved once at request time via `resolve_model(model, diarize)` in `api.py` — same resolved values used for both storage (`get_stored_model`) and execution (`transcribe_chunk`)
 - `resolve_model()` extracts base model from `-diarize` suffix for backward compat (e.g. `"gemini-2.0-flash-diarize"` → `("gemini-2.0-flash", True)`)
 - Shared Gemini helpers (`is_gemini_model`, `get_client`) live in `app/clients.py` — used by both transcriber and summarizer
+- Gemini retry logic: `MAX_GEMINI_RETRIES = 3` with exponential backoff (`2^attempt` seconds) on empty content — raises `RuntimeError` after all retries exhausted
 - `duration_limit` API field is in minutes; converted to seconds (`* 60`) in the handler before storage
 - `duration_limit` validation: `0 <= v <= 480` (0 = no limit, max = 8 hours)
 
@@ -60,6 +66,11 @@
 - Logging via `logging.getLogger(__name__)`
 - No classes for data — records are plain dicts
 - YAML frontmatter fields: title, url, status, duration, duration_limit, model, words (on complete), created_at, error (in this order)
+
+## Logging
+- Custom formatter configured in `app/main.py` (not `run.py`); `run.py` passes `log_config=None` to uvicorn
+- Applies to `app`, `uvicorn`, `uvicorn.error`, `uvicorn.access` loggers — propagation disabled
+- Startup log shows enabled providers and active models
 
 ## Testing Conventions
 - `tmp_results` fixture monkeypatches `history.RESULTS_DIR` to a temp dir
@@ -116,3 +127,4 @@
 - Old records may lack newer frontmatter fields — always use `.get("field", "")` with defaults
 - `get_history()` strips `body` and `path` from returned dicts (metadata only)
 - Temp files use UUID suffixes for isolation — cleanup uses glob patterns to find chunks
+- Chunk cache JSON (`_chunks.json`) files are safely ignored by history glob (same pattern isolation as summary sidecars)

@@ -8,12 +8,6 @@ import sys
 def main():
     sys.path.insert(0, os.path.dirname(__file__))
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
     try:
         from app.config import settings  # noqa: F401
     except Exception:
@@ -28,7 +22,7 @@ def main():
 
     import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, log_level="info", log_config=None)
 
 
 if __name__ == "__main__":
