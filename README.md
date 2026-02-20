@@ -22,24 +22,27 @@
 
 ## Features
 
-- **YouTube audio download** via yt-dlp (any public YouTube video up to 4 hours)
-- **Multi-provider transcription** — OpenAI Whisper or Google Gemini, with automatic language detection
-- **Speaker detection** — optional diarization with speaker labels (`gpt-4o-transcribe-diarize`)
-- **AI summarization** — generate summaries via OpenAI or Gemini Chat API, stored as sidecar files
-- **Multi-provider support** — OpenAI + Google Gemini (via OpenAI-compatible endpoint, zero extra deps)
-- **Provider selector** — toggle between providers in the UI, persisted to localStorage
+**Transcription**
+- **YouTube → transcript** — paste a URL, get a full text via OpenAI Whisper or Google Gemini (switch providers in the UI)
+- **AI summarization** — custom or default prompt, stored alongside the transcript
+- **Speaker diarization** — optional speaker labels (`A:`, `B:`)
 - **Duration limit** — transcribe only the first N minutes of a video
-- **Audio & chunk caching** — re-transcriptions skip re-download; interrupted multi-chunk transcriptions resume from where they left off
-- **Re-transcribe** — re-run any completed or failed transcription, optionally switching models
-- **Expandable history** — click any completed transcript to preview the text inline
-- **Real-time progress with ETA** — streamed to the browser via Server-Sent Events, with per-chunk timing and estimated time remaining
-- **Cancel** an in-progress transcription from the UI
-- **History** with status tracking — persists across page refreshes and server restarts
-- **Show in Finder** — reveal any saved transcript file on disk
-- **Copy / Download** — tab-aware copy (transcript or summary) to clipboard, or save as `.txt`
-- **Obsidian export** — export directly to Obsidian vault via URI scheme (vault config remembered in localStorage)
-- **Markdown-based storage** — each transcript is a `.md` file, no database
-- **Playlist rejection** — only single video URLs accepted
+
+**Reliability**
+- **Smart caching** — audio cached after first download; interrupted multi-chunk jobs resume from the last completed chunk
+- **Re-transcribe** — re-run any transcript with a different model or provider
+
+**Experience**
+- **Real-time progress** — SSE-streamed stage updates with per-chunk ETA; cancel anytime
+- **History** — expandable cards with status tracking, inline preview, persistent across restarts
+
+**Export**
+- **Copy / Download** — tab-aware (transcript or summary), clipboard or `.txt`
+- **Obsidian export** — one-click send via `obsidian://` URI scheme
+- **Show in Finder** — reveal the `.md` file on disk
+
+**Storage**
+- **Markdown files** — plain `.md` with YAML frontmatter, no database
 
 ## Tech Stack
 
