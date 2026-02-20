@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import re
 import shutil
@@ -266,6 +268,7 @@ def delete_record(record_id: str) -> bool:
         return False
     audio = get_audio_path(record_id)
     delete_summary(record_id)
+    delete_chunk_cache(record_id)
     path.unlink(missing_ok=True)
     if audio:
         audio.unlink(missing_ok=True)
@@ -328,6 +331,51 @@ def delete_summary(record_id: str) -> None:
     if not re.fullmatch(r"[0-9a-f]{8}", record_id):
         return
     _summary_path(record_id).unlink(missing_ok=True)
+
+
+def _chunk_cache_path(record_id: str) -> Path:
+    """Return the path for a record's chunk cache sidecar file."""
+    return RESULTS_DIR / f"{record_id}_chunks.json"
+
+
+def _chunk_cache_key(model: str, diarize: bool, total: int) -> str:
+    """Hash of parameters that invalidate the chunk cache."""
+    raw = f"{model}|{diarize}|{total}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def load_chunk_cache(record_id: str, model: str, diarize: bool, total: int) -> list[str]:
+    """Load cached chunk transcriptions. Returns list of completed parts (may be shorter than total).
+    Returns empty list if cache missing or invalidated (model/diarize/total mismatch)."""
+    path = _chunk_cache_path(record_id)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Could not read chunk cache for %s", record_id)
+        return []
+    if data.get("cache_key") != _chunk_cache_key(model, diarize, total):
+        logger.info("Chunk cache invalidated for %s (parameter mismatch)", record_id)
+        return []
+    parts = data.get("parts", [])
+    if not isinstance(parts, list):
+        return []
+    return parts
+
+
+def save_chunk_cache(record_id: str, model: str, diarize: bool, total: int, parts: list[str]) -> None:
+    """Persist current chunk transcription progress."""
+    RESULTS_DIR.mkdir(exist_ok=True)
+    data = {"cache_key": _chunk_cache_key(model, diarize, total), "parts": parts}
+    _chunk_cache_path(record_id).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def delete_chunk_cache(record_id: str) -> None:
+    """Remove chunk cache sidecar file."""
+    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+        return
+    _chunk_cache_path(record_id).unlink(missing_ok=True)
 
 
 def cleanup_stale_records() -> None:

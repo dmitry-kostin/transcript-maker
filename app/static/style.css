@@ -97,6 +97,7 @@ body {
   min-height: 100vh;
   justify-content: flex-start;
   padding-top: 64px;
+  transition: padding-top 300ms ease;
 }
 
 .app[data-state="idle"] {
@@ -264,6 +265,12 @@ body {
   color: var(--text-muted);
 }
 
+.diarize-pill:has(input:disabled),
+.duration-pill:has(input:disabled) {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* ─── Duration limit pill ─── */
 
 .duration-pill {
@@ -381,7 +388,7 @@ button:active:not(:disabled) {
 }
 
 #transcribe-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.8;
   cursor: not-allowed;
 }
 
@@ -396,127 +403,58 @@ button:active:not(:disabled) {
   background: #ef5350;
 }
 
-/* ─── Waveform ─── */
+/* ─── Liquid Wave ─── */
 
 .waveform-container {
   position: relative;
   display: flex;
-  justify-content: center;
-  margin-top: 32px;
-}
-
-.waveform {
-  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  height: 64px;
+  margin-top: 32px;
+  height: 128px;
+}
+
+.waveform-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
   position: relative;
   z-index: 1;
+  overflow: visible;
 }
 
-.waveform .bar {
-  width: 3.5px;
-  border-radius: 2px;
-  will-change: height, opacity, transform;
-  transition: background 600ms ease, opacity 400ms ease;
-}
-
-.waveform.stopped .bar {
-  height: 6px !important;
-  opacity: 0.2;
-  background: var(--text-dim);
-  transition: height 400ms var(--ease-out-expo), opacity 400ms ease, background 400ms ease;
-}
-
-/* Downloading — amber cascade left-to-right */
-
-.waveform.downloading .bar {
-  background: var(--amber);
-  animation: download-wave 2.8s ease-in-out infinite;
-}
-
-@keyframes download-wave {
-  0%, 35%, 100% { height: 10px; opacity: 0.4; }
-  15% { height: var(--peak, 48px); opacity: 1; }
-}
-
-/* Transcribing — blue center-outward ripple */
-
-.waveform.transcribing .bar {
-  background: var(--blue);
-  animation: transcribe-pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes transcribe-pulse {
-  0%, 100% { height: var(--min, 10px); opacity: 0.4; }
-  50% { height: var(--peak, 48px); opacity: 1; }
-}
-
-/* Done — green bloom with brightness flash */
-
-.waveform.done .bar {
-  background: var(--green);
-  animation: done-bloom 0.8s ease-out forwards;
-}
-
-@keyframes done-bloom {
-  0% { opacity: 0.3; filter: brightness(1); }
-  40% { opacity: 1; filter: brightness(1.8); }
-  100% { opacity: 0.85; filter: brightness(1); }
-}
-
-/* Error — red shake + fade */
-
-.waveform.error .bar {
-  background: var(--red);
-  animation: error-shake 0.5s ease-out forwards;
-}
-
-@keyframes error-shake {
-  0% { opacity: 1; transform: translateX(0); }
-  20% { transform: translateX(-3px); }
-  40% { transform: translateX(3px); }
-  60% { transform: translateX(-2px); }
-  80% { transform: translateX(1px); opacity: 0.5; }
-  100% { transform: translateX(0); opacity: 0.2; }
-}
-
-/* Waveform ambient glow */
+.wave-path { transition: opacity 600ms ease; }
 
 .waveform-glow {
   position: absolute;
-  inset: -20px -40px;
+  inset: -24px -48px;
   border-radius: 50%;
-  filter: blur(40px);
+  filter: blur(44px);
   opacity: 0;
-  transition: opacity 1s ease, background 1s ease;
+  transition: opacity 800ms ease, background 800ms ease;
   z-index: 0;
   pointer-events: none;
 }
 
-.waveform.downloading ~ .waveform-glow {
-  background: var(--amber-glow);
-  opacity: 0.4;
+.waveform-svg.flash {
+  filter: brightness(1.8) saturate(1.3);
+  transition: filter 150ms ease-out;
 }
 
-.waveform.transcribing ~ .waveform-glow {
-  background: var(--blue-glow);
-  opacity: 0.4;
+.waveform-svg.flash-decay {
+  filter: brightness(1) saturate(1);
+  transition: filter 600ms ease;
 }
 
-.waveform.done ~ .waveform-glow {
-  background: var(--green-glow);
-  opacity: 0.5;
+/* ─── Progress block entrance ─── */
+
+#progress {
+  animation: progress-enter 250ms ease both;
 }
 
-.waveform.error ~ .waveform-glow {
-  background: var(--red-glow);
-  opacity: 0.3;
-}
-
-.waveform.stopped ~ .waveform-glow {
-  opacity: 0;
+@keyframes progress-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ─── Progress status ─── */
@@ -527,6 +465,8 @@ button:active:not(:disabled) {
   font-size: 0.85rem;
   margin-top: 16px;
   min-height: 1.4em;
+  width: 100%;
+  opacity: 0.5;
 }
 
 /* ─── Active result slot ─── */

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Transcript Maker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍭</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -65,8 +66,28 @@
 
     <div id="progress" hidden>
       <div class="waveform-container">
-        <div id="waveform" class="waveform stopped"></div>
         <div class="waveform-glow"></div>
+        <svg id="waveform-svg" class="waveform-svg" viewBox="0 0 640 128" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="wave-grad-upper" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#808080" stop-opacity="0.6"/>
+              <stop offset="100%" stop-color="#808080" stop-opacity="0.02"/>
+            </linearGradient>
+            <linearGradient id="wave-grad-lower" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#808080" stop-opacity="0.02"/>
+              <stop offset="100%" stop-color="#808080" stop-opacity="0.25"/>
+            </linearGradient>
+          </defs>
+          <g id="wave-group">
+            <path id="wave-secondary-upper" class="wave-path" fill="url(#wave-grad-upper)" opacity="0.3"/>
+            <path id="wave-secondary-lower" class="wave-path" fill="url(#wave-grad-lower)" opacity="0.15"/>
+            <path id="wave-primary-upper" class="wave-path" fill="url(#wave-grad-upper)" opacity="0.7"/>
+            <path id="wave-primary-lower" class="wave-path" fill="url(#wave-grad-lower)" opacity="0.35"/>
+            <path id="wave-tertiary-upper" class="wave-path" fill="url(#wave-grad-upper)" opacity="0.15"/>
+            <path id="wave-tertiary-lower" class="wave-path" fill="url(#wave-grad-lower)" opacity="0.08"/>
+          </g>
+          <line x1="0" y1="64" x2="640" y2="64" stroke="#808080" stroke-opacity="0.08" stroke-width="0.5"/>
+        </svg>
       </div>
       <p id="progress-status" class="progress-status"></p>
     </div>
