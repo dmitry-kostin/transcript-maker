@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="Transcript Maker" width="100%">
+  <img src="https://github.com/user-attachments/assets/d6240213-acb3-4314-b7ec-b1c7c64a843c" alt="Transcript Maker" width="100%">
 </p>
 
 <p align="center">
