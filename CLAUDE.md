@@ -8,20 +8,27 @@
 
 ## Environment
 - Requires `TM_OPENAI_API_KEY` env var or `.env` file (not needed for demo mode)
-- `TM_SUMMARIZE_MODEL` env var (default: `gpt-4o`) — model used for AI summarization
+- `GOOGLE_API_KEY` env var (no `TM_` prefix) — required when using Gemini models
+- `TM_SUMMARIZE_MODEL` env var (default: `gpt-4o`) — model used for AI summarization (supports `gemini-*` models)
+- `TM_TRANSCRIBE_MODEL` env var (default: `gpt-4o-transcribe`) — model used for transcription (supports `gemini-*` models)
+- Per-provider model defaults (used by provider selector when switching providers):
+  - `TM_OPENAI_TRANSCRIBE_MODEL` (default: `gpt-4o-transcribe`)
+  - `TM_OPENAI_SUMMARIZE_MODEL` (default: `gpt-4o`)
+  - `TM_GEMINI_TRANSCRIBE_MODEL` (default: `gemini-3-flash-preview`)
+  - `TM_GEMINI_SUMMARIZE_MODEL` (default: `gemini-3-flash-preview`)
 - Tests set a dummy key in `conftest.py` — no real key needed for unit tests
 
 ## Demo Mode
 - Open `http://localhost:8000?demo` — frontend routes requests to `/api/demo/` endpoints
-- Simulates 10s download + 10s transcription with fake transcript text, no real APIs called
+- Simulates 5s download + 5s transcription with fake transcript text, no real APIs called
 - 50% chance of multi-chunk mode (2–6 chunks) to test chunk progress UI
 - URL validation is skipped — type anything in the input field
 - History records are real (written to `results/`), retranscribe works too
 
 ## Architecture
-- FastAPI app with SSE-based transcription pipeline: download → chunk → whisper API → save
+- FastAPI app with SSE-based transcription pipeline: download → chunk → transcription API → save
 - History stored as markdown files with YAML frontmatter in `results/` — no database
-- AI summarization via OpenAI Chat API — summaries stored as sidecar files `results/{record_id}_summary.md`
+- AI summarization via Chat Completions API (OpenAI or Gemini) — summaries stored as sidecar files `results/{record_id}_summary.md`
 - Frontend is vanilla HTML/CSS/JS in `app/static/` — no build step
 
 ## Key Patterns
@@ -30,29 +37,44 @@
 - SSE generators in `api.py`: yield progress events, handle client disconnect, `finally` marks interrupted records as failed
 - `complete_record()` / `fail_record()` rebuild the full YAML meta dict from parsed record — always include all fields
 - `_write_md()` uses `sort_keys=False` to preserve frontmatter key order
-- Audio cached in `results/{record_id}.mp3` after download — reused by retranscribe, deleted with record
+- Audio cached in `results/{record_id}.mp3` after download — reused by retranscribe and same-URL re-transcriptions, deleted with record
+- `find_cached_audio_by_url()` in `history.py`: scans existing records to skip re-download when the same URL is transcribed again
 - Summary sidecar: `results/{record_id}_summary.md` with YAML frontmatter (prompt, created_at) + body
 - `delete_record()` cascades to delete summary sidecar + audio cache
 - Video title prepended as first line of transcript and summary body in `api.py` (all codepaths: transcribe, demo, retranscribe, summarize, demo summarize)
 
-## Two Whisper Models
-- `gpt-4o-transcribe` (default) — plain text output
-- `gpt-4o-transcribe-diarize` — speaker detection, returns "Speaker: text" lines
-- Model is selected per-request, stored in record frontmatter as `model` field
-- Frontend toggle "Speaker detection" maps to diarize model
+## Transcription Models
+- `gpt-4o-transcribe` (default) — OpenAI Whisper, plain text output
+- `gpt-4o-transcribe-diarize` — OpenAI Whisper with speaker detection, returns `A: text`, `B: text` speaker labels
+- `gemini-*` models — Google Gemini via OpenAI-compatible endpoint, uses chat + `input_audio` for transcription; diarization is prompt-driven (not API-native like Whisper) using same `A: B:` label format
+- `TM_TRANSCRIBE_MODEL` overrides the default; frontend sends `diarize: true` as a separate boolean
+- Model resolved once at request time via `resolve_model(model, diarize)` in `api.py` — same resolved values used for both storage (`get_stored_model`) and execution (`transcribe_chunk`)
+- `resolve_model()` extracts base model from `-diarize` suffix for backward compat (e.g. `"gemini-2.0-flash-diarize"` → `("gemini-2.0-flash", True)`)
+- Shared Gemini helpers (`is_gemini_model`, `get_client`) live in `app/clients.py` — used by both transcriber and summarizer
+- `duration_limit` API field is in minutes; converted to seconds (`* 60`) in the handler before storage
+- `duration_limit` validation: `0 <= v <= 480` (0 = no limit, max = 8 hours)
 
 ## Code Style
 - Type hints on all function signatures
 - `dict | None` union syntax (Python 3.10+)
 - Logging via `logging.getLogger(__name__)`
 - No classes for data — records are plain dicts
-- YAML frontmatter fields: title, url, status, duration, model, created_at, error (in this order)
+- YAML frontmatter fields: title, url, status, duration, duration_limit, model, words (on complete), created_at, error (in this order)
 
 ## Testing Conventions
 - `tmp_results` fixture monkeypatches `history.RESULTS_DIR` to a temp dir
 - Test classes group related tests (e.g. `TestLifecycle`, `TestEdgeCases`)
 - Mock external deps (yt-dlp, ffmpeg, OpenAI) in unit tests
 - Integration tests marked with `@pytest.mark.integration`
+
+## Integration Tests
+- Run with: `poetry run pytest -m integration -v --log-cli-level=INFO`
+- Requires: internet, ffmpeg, `TM_OPENAI_API_KEY` (OpenAI tests), `GOOGLE_API_KEY` (Gemini tests + LLM judge)
+- Tests with missing keys are skipped automatically
+- Audio caching: downloaded audio cached in `tmp/test_cache/` (in-memory + disk); only `test_download_returns_valid_audio` downloads fresh
+- LLM judge: Gemini validates transcription/summary quality, returns JSON `{confidence, justification}`; threshold is 70%
+- Debug report: each run writes `tests/debug/integration_YYYYMMDD_HHMMSS.md` with full outputs, word counts, and judge scores
+- `tests/debug/` is gitignored
 
 ## Summarize Feature
 - Summarize button appears on completed transcript cards (expands card if collapsed)
@@ -62,10 +84,24 @@
 - Expanded cards show Transcript/Summary tab toggle when a summary exists
 - Copy button copies based on active tab (transcript or summary), toast says "Transcript copied" / "Summary copied"
 - Demo mode: simulated 2s delay, canned summary text
+- `SummarizeRequest` accepts optional `model` field — frontend passes `getSummarizeModel()` based on selected provider
 - Endpoints: `POST /api/history/{id}/summarize`, `GET /api/history/{id}/summary`
 
+## Provider Selector
+- `GET /api/providers` — returns available providers based on configured API keys (`openai_api_key`, `google_api_key`)
+- Frontend widget in bottom-left corner toggles between providers, persists selection to `localStorage` key `tm_provider`
+- Each provider entry includes `transcribe_model` and `summarize_model` — frontend passes these to all API calls
+- Provider only appears if its API key is configured; widget hidden when fewer than 2 providers available
+
+## Duration Limit
+- "First N min" toggle + input in the frontend, sends `duration_limit` in minutes
+- API converts minutes → seconds (`* 60`) before storage and passing to `prepare_chunks()`
+- `prepare_chunks()` truncates audio via ffmpeg before chunking when `duration_limit` is set
+- Stored in YAML frontmatter as `duration_limit` (seconds); card displays "first Nm" badge and "Nm of Xh Ym" duration format
+- Validation: `0 <= duration_limit <= 480` minutes (0 = no limit, max = 8 hours)
+
 ## Gotchas
-- `_parse_md()` coerces all YAML values to strings (line 57) except duration (explicitly int)
+- `_parse_md()` coerces all YAML values to strings except `duration`, `duration_limit`, and `words` (explicitly int)
 - Old records may lack newer frontmatter fields — always use `.get("field", "")` with defaults
 - `get_history()` strips `body` and `path` from returned dicts (metadata only)
 - Temp files use UUID suffixes for isolation — cleanup uses glob patterns to find chunks

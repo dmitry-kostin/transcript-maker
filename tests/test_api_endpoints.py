@@ -4,8 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.history import create_record, complete_record, get_summary, RESULTS_DIR
-from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS
+from app.history import create_record, complete_record, get_record, get_summary, RESULTS_DIR
+from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS, get_stored_model, resolve_model
 import app.history as history_mod
 
 
@@ -187,6 +187,28 @@ class TestSummarizeEndpoint:
         assert "Key Points" in data["summary"]
 
 
+class TestModelStorage:
+    def test_openai_diarize_model_stored(self, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        stored = get_stored_model("", diarize=True)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60, model=stored)
+        rec = get_record(rid)
+        assert rec["model"] == "gpt-4o-transcribe-diarize"
+
+    def test_gemini_diarize_model_stored(self, tmp_path, monkeypatch):
+        import app.transcriber as mod
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        stored = get_stored_model("", diarize=True)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60, model=stored)
+        rec = get_record(rid)
+        assert rec["model"] == "gemini-3-flash-preview-diarize"
+
+
 class TestPrepareChunks:
     def test_small_file_short_duration_no_chunking(self, tmp_path):
         """File under size AND duration limits → no chunking."""
@@ -242,3 +264,188 @@ class TestPrepareChunks:
             chunks = prepare_chunks(audio)
 
         assert len(chunks) >= 2
+
+
+class TestDurationLimitParam:
+    def test_transcribe_accepts_duration_limit(self, client):
+        res = client.post("/api/transcribe", json={
+            "url": "https://www.youtube.com/watch?v=abc123xyz",
+            "duration_limit": 5,
+        })
+        # Should not be a 422 validation error — the SSE response starts (stream)
+        assert res.status_code == 200
+
+    def test_transcribe_rejects_negative_duration_limit(self, client):
+        res = client.post("/api/transcribe", json={
+            "url": "https://www.youtube.com/watch?v=abc123xyz",
+            "duration_limit": -1,
+        })
+        assert res.status_code == 422
+
+    def test_retranscribe_rejects_negative_duration_limit(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 600)
+        complete_record(rid, "Some text")
+        res = client.post(f"/api/history/{rid}/retranscribe", json={
+            "model": "",
+            "duration_limit": -1,
+        })
+        assert res.status_code == 422
+
+    def test_transcribe_rejects_excessive_duration_limit(self, client):
+        """duration_limit has an upper bound matching the frontend max (Issue #5)."""
+        res = client.post("/api/transcribe", json={
+            "url": "https://www.youtube.com/watch?v=abc123xyz",
+            "duration_limit": 999999,
+        })
+        assert res.status_code == 422
+
+    def test_retranscribe_rejects_excessive_duration_limit(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 600)
+        complete_record(rid, "Some text")
+        res = client.post(f"/api/history/{rid}/retranscribe", json={
+            "model": "",
+            "duration_limit": 999999,
+        })
+        assert res.status_code == 422
+
+    def test_duration_limit_zero_means_no_limit(self):
+        """duration_limit=0 passes validation — means 'no limit' (Issue #19)."""
+        from app.api import TranscribeRequest
+        req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", duration_limit=0)
+        assert req.duration_limit == 0
+
+    def test_transcribe_accepts_diarize_param(self):
+        """diarize boolean is accepted by the API model (Issue #1)."""
+        from app.api import TranscribeRequest
+        req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", diarize=True)
+        assert req.diarize is True
+
+    def test_diarize_defaults_false(self):
+        """diarize defaults to False when not specified."""
+        from app.api import TranscribeRequest
+        req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz")
+        assert req.diarize is False
+
+    def test_retranscribe_accepts_diarize_param(self):
+        """RetranscribeRequest also accepts diarize."""
+        from app.api import RetranscribeRequest
+        req = RetranscribeRequest(diarize=True, duration_limit=5)
+        assert req.diarize is True
+
+
+class TestProvidersEndpoint:
+    def test_both_keys(self, client, monkeypatch):
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
+        res = client.get("/api/providers")
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["providers"]) == 2
+        ids = [p["id"] for p in data["providers"]]
+        assert "openai" in ids
+        assert "gemini" in ids
+
+    def test_openai_only(self, client, monkeypatch):
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "")
+        res = client.get("/api/providers")
+        data = res.json()
+        assert len(data["providers"]) == 1
+        assert data["providers"][0]["id"] == "openai"
+
+    def test_gemini_only(self, client, monkeypatch):
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
+        res = client.get("/api/providers")
+        data = res.json()
+        assert len(data["providers"]) == 1
+        assert data["providers"][0]["id"] == "gemini"
+
+    def test_no_keys(self, client, monkeypatch):
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "")
+        res = client.get("/api/providers")
+        data = res.json()
+        assert len(data["providers"]) == 0
+
+    def test_gemini_default_model_used(self, client, monkeypatch):
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
+        monkeypatch.setattr(api_mod.settings, "transcribe_model", "gemini-2.5-flash")
+        res = client.get("/api/providers")
+        data = res.json()
+        gemini = next(p for p in data["providers"] if p["id"] == "gemini")
+        openai = next(p for p in data["providers"] if p["id"] == "openai")
+        # When transcribe_model is Gemini, Gemini provider uses it directly
+        assert gemini["transcribe_model"] == "gemini-2.5-flash"
+        # OpenAI provider falls back to settings.openai_transcribe_model
+        assert openai["transcribe_model"] == api_mod.settings.openai_transcribe_model
+
+    def test_providers_use_per_provider_settings(self, client, monkeypatch):
+        """Per-provider model settings are configurable via env vars."""
+        import app.api as api_mod
+        monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
+        monkeypatch.setattr(api_mod.settings, "gemini_transcribe_model", "gemini-custom")
+        monkeypatch.setattr(api_mod.settings, "gemini_summarize_model", "gemini-custom-sum")
+        res = client.get("/api/providers")
+        data = res.json()
+        gemini = next(p for p in data["providers"] if p["id"] == "gemini")
+        assert gemini["transcribe_model"] == "gemini-custom"
+        assert gemini["summarize_model"] == "gemini-custom-sum"
+
+    def test_summarize_with_model_override(self, client, tmp_path, monkeypatch):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
+        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Transcript text")
+        with patch("app.api.summarize_text", return_value="Mocked summary") as mock_fn:
+            res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom", "model": "gemini-2.0-flash"})
+        assert res.status_code == 200
+        mock_fn.assert_called_once_with("Transcript text", "Custom", model="gemini-2.0-flash")
+
+
+class TestFrontendModelResolution:
+    """Verify the frontend's diarize=true resolves correctly through resolve_model (Issue #20)."""
+
+    def test_diarize_true_resolves_with_openai_default(self, monkeypatch):
+        import app.transcriber as mod
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
+        model, diarize = resolve_model("", diarize=True)
+        assert model == "gpt-4o-transcribe"
+        assert diarize is True
+
+    def test_diarize_true_resolves_with_gemini_default(self, monkeypatch):
+        import app.transcriber as mod
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-2.0-flash")
+        model, diarize = resolve_model("", diarize=True)
+        assert model == "gemini-2.0-flash"
+        assert diarize is True
+
+    def test_diarize_false_with_empty_model(self, monkeypatch):
+        import app.transcriber as mod
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
+        model, diarize = resolve_model("", diarize=False)
+        assert model == "gpt-4o-transcribe"
+        assert diarize is False
+
+    def test_stored_model_matches_resolved(self, monkeypatch):
+        """Storage and execution use the same resolved model (Issue #3)."""
+        import app.transcriber as mod
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-2.0-flash")
+        actual_model, diarize = resolve_model("", diarize=True)
+        stored = get_stored_model("", diarize=True)
+        assert stored == f"{actual_model}-diarize"
+        assert actual_model == "gemini-2.0-flash"

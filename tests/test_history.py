@@ -5,7 +5,7 @@ from app.history import (
     get_history, get_record, reset_record,
     delete_record, get_result_path,
     cleanup_stale_records,
-    save_audio, get_audio_path,
+    save_audio, get_audio_path, find_cached_audio_by_url,
     save_summary, get_summary, delete_summary,
 )
 
@@ -241,6 +241,51 @@ class TestModelField:
         assert records[0]["model"] == "gpt-4o-transcribe-diarize"
 
 
+class TestDurationLimit:
+    def test_stored_on_create(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        record = get_record(rid)
+        assert record["duration_limit"] == 300
+
+    def test_preserved_through_complete(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        complete_record(rid, "Text")
+        record = get_record(rid)
+        assert record["status"] == "done"
+        assert record["duration_limit"] == 300
+
+    def test_preserved_through_fail(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        fail_record(rid, "error msg")
+        record = get_record(rid)
+        assert record["status"] == "error"
+        assert record["duration_limit"] == 300
+
+    def test_reset_preserves_existing(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        complete_record(rid, "Text")
+        reset_record(rid, model="gpt-4o-transcribe")
+        record = get_record(rid)
+        assert record["duration_limit"] == 300
+
+    def test_reset_can_change_limit(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        complete_record(rid, "Text")
+        reset_record(rid, model="gpt-4o-transcribe", duration_limit=600)
+        record = get_record(rid)
+        assert record["duration_limit"] == 600
+
+    def test_defaults_zero_for_old_records(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        record = get_record(rid)
+        assert record["duration_limit"] == 0
+
+    def test_in_history(self, tmp_results):
+        create_record("Vid", "https://youtube.com/watch?v=abc", 600, duration_limit=300)
+        records = get_history()
+        assert records[0]["duration_limit"] == 300
+
+
 class TestAudioCache:
     def test_save_and_find(self, tmp_results, tmp_path):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
@@ -272,6 +317,49 @@ class TestAudioCache:
         delete_record(rid)
         assert not cached.exists()
         assert get_audio_path(rid) is None
+
+
+class TestFindCachedAudioByUrl:
+    def test_finds_cached_audio(self, tmp_results, tmp_path):
+        url = "https://youtube.com/watch?v=abc"
+        rid = create_record("Vid", url, 120)
+        complete_record(rid, "Transcript text")
+        audio = tmp_path / "download.mp3"
+        audio.write_bytes(b"\x00" * 1024)
+        save_audio(rid, audio)
+        result = find_cached_audio_by_url(url)
+        assert result is not None
+        cached_path, record = result
+        assert cached_path.exists()
+        assert record["url"] == url
+        assert record["id"] == rid
+
+    def test_returns_none_for_unknown_url(self, tmp_results, tmp_path):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 120)
+        audio = tmp_path / "download.mp3"
+        audio.write_bytes(b"\x00" * 1024)
+        save_audio(rid, audio)
+        assert find_cached_audio_by_url("https://youtube.com/watch?v=other") is None
+
+    def test_returns_none_when_no_audio_cached(self, tmp_results):
+        url = "https://youtube.com/watch?v=abc"
+        create_record("Vid", url, 120)
+        assert find_cached_audio_by_url(url) is None
+
+    def test_returns_none_when_no_records(self, tmp_results):
+        assert find_cached_audio_by_url("https://youtube.com/watch?v=abc") is None
+
+    def test_finds_from_multiple_records(self, tmp_results, tmp_path):
+        """When multiple records exist, finds the one with matching URL and audio."""
+        rid1 = create_record("Vid 1", "https://youtube.com/watch?v=aaa", 60)
+        rid2 = create_record("Vid 2", "https://youtube.com/watch?v=bbb", 120)
+        audio = tmp_path / "download.mp3"
+        audio.write_bytes(b"\x00" * 1024)
+        save_audio(rid2, audio)
+        result = find_cached_audio_by_url("https://youtube.com/watch?v=bbb")
+        assert result is not None
+        _, record = result
+        assert record["id"] == rid2
 
 
 class TestSummaryCRUD:

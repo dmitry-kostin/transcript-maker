@@ -66,6 +66,7 @@ def _parse_md(path: Path) -> dict | None:
         "url": meta.get("url", ""),
         "status": meta.get("status", "unknown"),
         "duration": int(meta.get("duration", 0) or 0),
+        "duration_limit": int(meta.get("duration_limit", 0) or 0),
         "model": meta.get("model", ""),
         "words": int(meta.get("words", 0) or 0) or (len(body.split()) if body else 0),
         "created_at": meta.get("created_at", ""),
@@ -75,7 +76,7 @@ def _parse_md(path: Path) -> dict | None:
     }
 
 
-def create_record(title: str, url: str, duration: float, model: str = "") -> str:
+def create_record(title: str, url: str, duration: float, model: str = "", duration_limit: int = 0) -> str:
     """Create a new result .md file with status: in_progress. Returns record_id."""
     RESULTS_DIR.mkdir(exist_ok=True)
     record_id = uuid.uuid4().hex[:8]
@@ -88,6 +89,7 @@ def create_record(title: str, url: str, duration: float, model: str = "") -> str
         "url": url,
         "status": "in_progress",
         "duration": int(duration),
+        "duration_limit": duration_limit,
         "model": model,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
         "error": "",
@@ -114,6 +116,7 @@ def complete_record(record_id: str, text: str) -> bool:
         "url": parsed["url"],
         "status": "done",
         "duration": parsed["duration"],
+        "duration_limit": parsed.get("duration_limit", 0),
         "model": parsed.get("model", ""),
         "words": words,
         "created_at": parsed["created_at"],
@@ -140,6 +143,7 @@ def fail_record(record_id: str, error_msg: str) -> bool:
         "url": parsed["url"],
         "status": "error",
         "duration": parsed["duration"],
+        "duration_limit": parsed.get("duration_limit", 0),
         "model": parsed.get("model", ""),
         "created_at": parsed["created_at"],
         "error": error_msg,
@@ -160,7 +164,7 @@ def get_record(record_id: str) -> dict | None:
     return parsed
 
 
-def reset_record(record_id: str, model: str = "") -> bool:
+def reset_record(record_id: str, model: str = "", duration_limit: int | None = None) -> bool:
     """Reset an existing record back to in_progress with a new model. Returns True if written."""
     path = _resolve_path(record_id)
     if not path:
@@ -173,6 +177,7 @@ def reset_record(record_id: str, model: str = "") -> bool:
         "url": parsed["url"],
         "status": "in_progress",
         "duration": parsed["duration"],
+        "duration_limit": duration_limit if duration_limit is not None else parsed.get("duration_limit", 0),
         "model": model,
         "created_at": parsed["created_at"],
         "error": "",
@@ -235,6 +240,22 @@ def get_audio_path(record_id: str) -> Path | None:
     for path in RESULTS_DIR.glob(f"{record_id}.*"):
         if path.suffix != ".md":
             return path
+    return None
+
+
+def find_cached_audio_by_url(url: str) -> tuple[Path, dict] | None:
+    """Find cached audio from a previous record with the same URL.
+
+    Returns (audio_path, record_dict) or None.
+    """
+    RESULTS_DIR.mkdir(exist_ok=True)
+    for path in RESULTS_DIR.glob("*.md"):
+        parsed = _parse_md(path)
+        if not parsed or parsed["url"] != url:
+            continue
+        audio = get_audio_path(parsed["id"])
+        if audio:
+            return audio, parsed
     return None
 
 

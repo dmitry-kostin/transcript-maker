@@ -23,9 +23,13 @@
 ## Features
 
 - **YouTube audio download** via yt-dlp (any public YouTube video up to 4 hours)
-- **OpenAI Whisper transcription** with automatic language detection
+- **Multi-provider transcription** — OpenAI Whisper or Google Gemini, with automatic language detection
 - **Speaker detection** — optional diarization with speaker labels (`gpt-4o-transcribe-diarize`)
-- **AI summarization** — generate summaries via OpenAI Chat API, stored as sidecar files
+- **AI summarization** — generate summaries via OpenAI or Gemini Chat API, stored as sidecar files
+- **Multi-provider support** — OpenAI + Google Gemini (via OpenAI-compatible endpoint, zero extra deps)
+- **Provider selector** — toggle between providers in the UI, persisted to localStorage
+- **Duration limit** — transcribe only the first N minutes of a video
+- **Audio caching** — re-transcriptions and same-URL transcriptions skip re-download
 - **Re-transcribe** — re-run any completed or failed transcription, optionally switching models
 - **Expandable history** — click any completed transcript to preview the text inline
 - **Real-time progress** streamed to the browser via Server-Sent Events
@@ -41,6 +45,7 @@
 - Python 3.11+, FastAPI, uvicorn
 - yt-dlp (YouTube download)
 - OpenAI Whisper API (transcription)
+- Google Gemini API (transcription + summarization, via OpenAI-compatible endpoint)
 - OpenAI Chat API (summarization)
 - ffmpeg / ffprobe (audio chunking)
 - pydantic-settings (configuration)
@@ -60,6 +65,9 @@ poetry install
 export TM_OPENAI_API_KEY=sk-...          # shell variable
 echo "TM_OPENAI_API_KEY=sk-..." > .env   # or .env file
 
+# Optional: add Gemini support
+export GOOGLE_API_KEY=AIza...             # no TM_ prefix
+
 # Start the server
 poetry run python run.py
 ```
@@ -74,7 +82,7 @@ To test the UI without a real API key or internet connection, add `?demo` to the
 http://127.0.0.1:8000?demo
 ```
 
-Demo mode simulates the full pipeline (10s download + 10s transcription) with fake data. No YouTube downloads or OpenAI API calls are made. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
+Demo mode simulates the full pipeline (5s download + 5s transcription) with fake data. No YouTube downloads or API calls are made. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
 
 ## Configuration
 
@@ -83,11 +91,17 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | Variable | Default | Description |
 |---|---|---|
 | `TM_OPENAI_API_KEY` | *(required)* | OpenAI API key |
+| `GOOGLE_API_KEY` | *(optional)* | Google API key for Gemini models (no `TM_` prefix) |
 | `TM_TEMP_DIR` | `./tmp` | Directory for temporary audio files |
 | `TM_RESULTS_DIR` | `./results` | Directory for saved transcript `.md` files |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
-| `TM_SUMMARIZE_MODEL` | `gpt-4o` | OpenAI model for AI summarization |
+| `TM_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | Default transcription model (supports `gemini-*`) |
+| `TM_SUMMARIZE_MODEL` | `gpt-4o` | Default summarization model (supports `gemini-*`) |
+| `TM_OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | OpenAI transcription model for provider selector |
+| `TM_OPENAI_SUMMARIZE_MODEL` | `gpt-4o` | OpenAI summarization model for provider selector |
+| `TM_GEMINI_TRANSCRIBE_MODEL` | `gemini-3-flash-preview` | Gemini transcription model for provider selector |
+| `TM_GEMINI_SUMMARIZE_MODEL` | `gemini-3-flash-preview` | Gemini summarization model for provider selector |
 
 ## Project Structure
 
@@ -102,9 +116,10 @@ transcript-maker/
 │   ├── main.py             # FastAPI app factory + static mount
 │   ├── config.py           # pydantic-settings (env vars)
 │   ├── api.py              # API routes (transcribe + history endpoints)
+│   ├── clients.py          # Shared OpenAI/Gemini client helpers
 │   ├── downloader.py       # yt-dlp: download + extract audio
-│   ├── transcriber.py      # ffmpeg chunking + OpenAI Whisper API
-│   ├── summarizer.py       # OpenAI Chat Completions for summarization
+│   ├── transcriber.py      # ffmpeg chunking + OpenAI/Gemini transcription
+│   ├── summarizer.py       # Chat Completions for summarization (OpenAI + Gemini)
 │   ├── history.py          # Persistence layer (markdown files)
 │   └── static/
 │       ├── index.html
@@ -115,6 +130,7 @@ transcript-maker/
 │   ├── test_history.py     # History module tests
 │   ├── test_downloader.py  # Downloader unit tests (mocked yt-dlp)
 │   ├── test_transcriber.py # Transcriber unit tests (mocked ffmpeg)
+│   ├── test_summarizer.py  # Summarizer unit tests
 │   ├── test_validation.py  # URL validation tests
 │   ├── test_api_endpoints.py # API endpoint tests (TestClient)
 │   └── test_integration.py # End-to-end tests (real APIs)
@@ -135,6 +151,7 @@ transcript-maker/
 | `POST` | `/api/history/{id}/reveal` | Open Finder with the transcript file selected |
 | `DELETE` | `/api/history/{id}` | Delete a saved transcript |
 | `POST` | `/api/cleanup` | Clean up temp files and stale records |
+| `GET` | `/api/providers` | List available model providers |
 | `POST` | `/api/history/{id}/summarize` | Generate AI summary for a transcript |
 | `GET` | `/api/history/{id}/summary` | Get stored summary for a transcript |
 | `POST` | `/api/demo/transcribe` | Demo: simulated transcription (SSE stream) |
@@ -145,11 +162,18 @@ transcript-maker/
 
 **Request:**
 ```json
-{ "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "model": "gpt-4o-transcribe-diarize" }
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "model": "gpt-4o-transcribe",
+  "diarize": true,
+  "duration_limit": 30
+}
 ```
 
 - `url` — YouTube video URL (required)
-- `model` — Whisper model to use (optional). `""` or omitted for default (`gpt-4o-transcribe`), `"gpt-4o-transcribe-diarize"` for speaker detection.
+- `model` — Transcription model (optional, default `gpt-4o-transcribe`). Supports OpenAI models (`gpt-4o-transcribe`) and Gemini models (`gemini-*`).
+- `diarize` — Enable speaker detection (optional, default `false`). Appends `-diarize` suffix to the stored model name.
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`). Converted to seconds internally.
 
 Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs or playlist URLs.
 
@@ -158,7 +182,7 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
 | Event | Payload | When |
 |---|---|---|
 | `progress` | `{"stage": "...", "message": "...", "record_id": "..."}` | Each pipeline stage |
-| `transcript` | `{"text": "...", "title": "...", "duration_seconds": N, "record_id": "..."}` | Transcription complete |
+| `transcript` | `{"text": "...", "title": "...", "duration_seconds": N, "duration_limit": N, "model": "...", "record_id": "..."}` | Transcription complete |
 | `error` | `{"message": "...", "record_id": "..."}` | On failure |
 | `done` | `{}` | Stream finished |
 
@@ -168,10 +192,16 @@ Re-transcribes an existing record using its stored URL. Returns an SSE stream id
 
 **Request:**
 ```json
-{ "model": "gpt-4o-transcribe-diarize" }
+{
+  "model": "gpt-4o-transcribe",
+  "diarize": false,
+  "duration_limit": 0
+}
 ```
 
-- `model` — Whisper model to use (optional, same as `/api/transcribe`)
+- `model` — Transcription model (optional, same as `/api/transcribe`)
+- `diarize` — Enable speaker detection (optional, default `false`)
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`)
 
 Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
 
@@ -181,10 +211,11 @@ Generate an AI summary for a completed transcript.
 
 **Request:**
 ```json
-{ "prompt": "Summarize the key points" }
+{ "prompt": "Summarize the key points", "model": "gpt-4o" }
 ```
 
 - `prompt` — Custom summarization prompt (optional, empty string uses default prompt)
+- `model` — Summarization model (optional, uses `TM_SUMMARIZE_MODEL` default). Supports `gemini-*` models.
 
 **Response:**
 ```json
@@ -211,6 +242,32 @@ Retrieve a previously generated summary.
 
 Returns 400 for invalid ID, 404 if no summary exists.
 
+### GET /api/providers
+
+Returns available model providers based on which API keys are configured.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "transcribe_model": "gpt-4o-transcribe",
+      "summarize_model": "gpt-4o"
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini",
+      "transcribe_model": "gemini-3-flash-preview",
+      "summarize_model": "gemini-3-flash-preview"
+    }
+  ]
+}
+```
+
+Each provider only appears if its API key is configured (`TM_OPENAI_API_KEY` for OpenAI, `GOOGLE_API_KEY` for Gemini). The frontend provider selector widget is hidden when fewer than 2 providers are available.
+
 ### GET /api/history
 
 **Response:**
@@ -222,6 +279,7 @@ Returns 400 for invalid ID, 404 if no summary exists.
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "status": "done",
     "duration": 213,
+    "duration_limit": 0,
     "model": "gpt-4o-transcribe-diarize",
     "words": 1842,
     "created_at": "2026-02-19T10:30:00",
@@ -238,13 +296,14 @@ Records are sorted newest-first by `created_at`.
 ## Processing Pipeline
 
 1. **Validate** — reject non-YouTube URLs and playlist URLs (422)
-2. **Download** — yt-dlp extracts audio as 64kbps MP3 (async via thread pool)
+2. **Download** — yt-dlp extracts audio as 64kbps MP3 (async via thread pool), or reuse cached audio
 3. **Guard** — reject videos longer than 4 hours; check for client disconnect
 4. **Create record** — write `.md` file with `status: in_progress` and selected model
-5. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)
-6. **Transcribe** — send each chunk to OpenAI Whisper API sequentially (using selected model)
-7. **Complete** — update `.md` to `status: done`, write transcript as body
-8. **Cleanup** — delete temporary audio files
+5. **Truncate** — if `duration_limit` is set, ffmpeg trims audio to the specified length
+6. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)
+7. **Transcribe** — send each chunk to OpenAI Whisper or Gemini API sequentially (using selected model)
+8. **Complete** — update `.md` to `status: done`, write transcript as body
+9. **Cleanup** — delete temporary audio files
 
 On error at any step, the record is updated to `status: error`. On client disconnect, the record stays `in_progress` (no partial saves).
 
@@ -258,7 +317,9 @@ title: "Rick Astley - Never Gonna Give You Up"
 url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 status: "done"
 duration: 213
+duration_limit: 0
 model: "gpt-4o-transcribe-diarize"
+words: 1842
 created_at: "2026-02-19T10:30:00"
 error: ""
 ---
@@ -283,16 +344,30 @@ On server startup, any leftover `in_progress` records (from a prior crash) are a
 
 ```bash
 # Unit + endpoint tests (fast, no external API calls)
-poetry run pytest tests/ -m "not integration" -v
+poetry run pytest -v
 
-# Integration tests (requires real OpenAI API key + internet)
-poetry run pytest tests/ -m integration -v
+# Integration tests (real YouTube download + OpenAI/Gemini APIs)
+poetry run pytest -m integration -v --log-cli-level=INFO
 
 # All tests
-poetry run pytest tests/ -v
+poetry run pytest -m "integration or not integration" -v
 ```
 
-Integration tests use a short YouTube video and are skipped automatically when no valid API key is configured.
+Unit tests are mocked and need no API keys (`conftest.py` sets a dummy key). Integration tests are **deselected by default** and require:
+
+- Internet access and ffmpeg
+- `TM_OPENAI_API_KEY` — for OpenAI transcription/summarization tests
+- `GOOGLE_API_KEY` — for Gemini tests **and** LLM judge quality validation
+
+Tests with a missing key are skipped automatically. When only an OpenAI key is set, Gemini tests are skipped and OpenAI tests run without the LLM quality judge (basic assertions only).
+
+### Audio caching
+
+Integration tests cache the downloaded audio in `tmp/test_cache/` to avoid re-downloading on subsequent runs. The first run downloads once (~5 MB); later runs reuse the disk cache. `test_download_returns_valid_audio` always downloads fresh (it tests the download path itself).
+
+### Debug report
+
+Each integration run writes a markdown report to `tests/debug/integration_YYYYMMDD_HHMMSS.md` with full transcript/summary text, word counts, and LLM judge confidence scores. This directory is gitignored.
 
 ## Security
 
