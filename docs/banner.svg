@@ -7,78 +7,95 @@
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
     </pattern>
-    <clipPath id="lc">
-      <circle cx="32" cy="22" r="15.5"/>
-    </clipPath>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="waveGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#e8a542"/>
+      <stop offset="100%" stop-color="#b07a2a"/>
+    </linearGradient>
   </defs>
 
   <rect width="900" height="300" rx="16" fill="#131318"/>
   <rect width="900" height="300" rx="16" fill="url(#grid)"/>
 
-  <!-- Lollipop icon -->
-  <g transform="translate(210, 55) scale(1.25)">
-    <rect x="29" y="38" width="6" height="22" rx="3" fill="#f0a0b4" stroke="#c2185b" stroke-width="1.5"/>
-    <circle cx="32" cy="22" r="17" fill="#fce4ec" stroke="#c2185b" stroke-width="2.5"/>
-    <g clip-path="url(#lc)">
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#e53935"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#64b5f6" transform="rotate(45,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#c6d84a" transform="rotate(90,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#fff" transform="rotate(135,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#e53935" transform="rotate(180,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#64b5f6" transform="rotate(225,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#c6d84a" transform="rotate(270,32,22)"/>
-      <path d="M32 22Q32 13 36 7A15.5 15.5 0 0 1 45.4 14.3Q38.6 15.4 32 22Z" fill="#fff" transform="rotate(315,32,22)"/>
-    </g>
-    <g stroke="#c2185b" stroke-width="2" fill="none" stroke-linecap="round">
-      <path d="M32 22Q32 13 36 7"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(45,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(90,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(135,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(180,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(225,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(270,32,22)"/>
-      <path d="M32 22Q32 13 36 7" transform="rotate(315,32,22)"/>
-    </g>
-  </g>
-
   <!-- Title -->
-  <text x="290" y="100" text-anchor="start" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" fill="url(#titleGrad)">Transcript Maker</text>
+  <text x="450" y="100" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" fill="url(#titleGrad)">Transcript Maker</text>
 
   <!-- Subtitle -->
-  <text x="290" y="135" text-anchor="start" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="16" fill="rgba(255,255,255,0.56)">Paste a YouTube URL, get a transcript and summarize with AI</text>
+  <text x="450" y="135" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="16" fill="rgba(255,255,255,0.56)">Paste a YouTube URL, Get a Transcript and Summarize with AI</text>
 
-  <!-- Waveform bars: amber (download) → blue (transcribe) → green (done) -->
-  <g transform="translate(180, 195)">
-    <!-- Amber bars -->
-    <rect x="0"   y="30" width="8" rx="4" height="40" fill="#e8a542" opacity="0.7"/>
-    <rect x="20"  y="15" width="8" rx="4" height="70" fill="#e8a542" opacity="0.8"/>
-    <rect x="40"  y="25" width="8" rx="4" height="50" fill="#e8a542" opacity="0.9"/>
-    <rect x="60"  y="5"  width="8" rx="4" height="90" fill="#e8a542"/>
-    <rect x="80"  y="20" width="8" rx="4" height="60" fill="#e8a542" opacity="0.9"/>
-    <rect x="100" y="30" width="8" rx="4" height="40" fill="#e8a542" opacity="0.8"/>
-    <rect x="120" y="10" width="8" rx="4" height="80" fill="#e8a542" opacity="0.85"/>
-    <rect x="140" y="22" width="8" rx="4" height="56" fill="#e8a542" opacity="0.9"/>
-    <rect x="160" y="35" width="8" rx="4" height="30" fill="#e8a542" opacity="0.75"/>
-    <!-- Blue bars -->
-    <rect x="180" y="18" width="8" rx="4" height="64" fill="#6c8eef" opacity="0.7"/>
-    <rect x="200" y="8"  width="8" rx="4" height="84" fill="#6c8eef" opacity="0.8"/>
-    <rect x="220" y="28" width="8" rx="4" height="44" fill="#6c8eef" opacity="0.9"/>
-    <rect x="240" y="12" width="8" rx="4" height="76" fill="#6c8eef"/>
-    <rect x="260" y="25" width="8" rx="4" height="50" fill="#6c8eef" opacity="0.9"/>
-    <rect x="280" y="5"  width="8" rx="4" height="90" fill="#6c8eef" opacity="0.85"/>
-    <rect x="300" y="20" width="8" rx="4" height="60" fill="#6c8eef" opacity="0.8"/>
-    <rect x="320" y="32" width="8" rx="4" height="36" fill="#6c8eef" opacity="0.75"/>
-    <rect x="340" y="15" width="8" rx="4" height="70" fill="#6c8eef" opacity="0.9"/>
-    <rect x="360" y="28" width="8" rx="4" height="44" fill="#6c8eef" opacity="0.8"/>
-    <!-- Green bars -->
-    <rect x="380" y="22" width="8" rx="4" height="56" fill="#4ade80" opacity="0.7"/>
-    <rect x="400" y="10" width="8" rx="4" height="80" fill="#4ade80" opacity="0.8"/>
-    <rect x="420" y="30" width="8" rx="4" height="40" fill="#4ade80" opacity="0.9"/>
-    <rect x="440" y="5"  width="8" rx="4" height="90" fill="#4ade80"/>
-    <rect x="460" y="18" width="8" rx="4" height="64" fill="#4ade80" opacity="0.85"/>
-    <rect x="480" y="28" width="8" rx="4" height="44" fill="#4ade80" opacity="0.9"/>
-    <rect x="500" y="12" width="8" rx="4" height="76" fill="#4ade80" opacity="0.8"/>
-    <rect x="520" y="32" width="8" rx="4" height="36" fill="#4ade80" opacity="0.75"/>
-    <rect x="540" y="20" width="8" rx="4" height="60" fill="#4ade80" opacity="0.85"/>
+  <!-- Flowing waveform — smooth overlapping humps, centered, tapers to edges -->
+  <g filter="url(#glow)">
+    <!-- Thin baseline -->
+    <line x1="60" y1="240" x2="840" y2="240" stroke="#c49a3a" stroke-width="0.5" opacity="0.25"/>
+
+    <!-- Wave A: left hump, peak ~280 -->
+    <path d="M100 240
+      C140 240, 190 230, 240 210
+      C265 198, 280 192, 300 198
+      C330 210, 370 232, 420 240
+      Z"
+      fill="#c49a3a" opacity="0.25"/>
+    <path d="M100 240
+      C140 240, 190 248, 240 260
+      C265 268, 280 272, 300 268
+      C330 260, 370 248, 420 240
+      Z"
+      fill="#c49a3a" opacity="0.09"/>
+
+    <!-- Wave B: center-left hump, peak ~420, tallest -->
+    <path d="M220 240
+      C270 240, 330 222, 380 198
+      C400 186, 420 178, 440 178
+      C460 178, 480 188, 510 205
+      C550 225, 590 238, 640 240
+      Z"
+      fill="#d4943a" opacity="0.35"/>
+    <path d="M220 240
+      C270 240, 330 252, 380 268
+      C400 276, 420 280, 440 280
+      C460 280, 480 274, 510 262
+      C550 248, 590 242, 640 240
+      Z"
+      fill="#d4943a" opacity="0.12"/>
+
+    <!-- Wave C: right hump, peak ~660 -->
+    <path d="M520 240
+      C560 240, 600 230, 630 216
+      C650 206, 660 200, 680 204
+      C700 212, 730 230, 780 240
+      Z"
+      fill="#e8a542" opacity="0.3"/>
+    <path d="M520 240
+      C560 240, 600 248, 630 260
+      C650 268, 660 272, 680 268
+      C700 258, 730 246, 780 240
+      Z"
+      fill="#e8a542" opacity="0.1"/>
+
+    <!-- Wave D: thin ripple hugging baseline, spans full width -->
+    <path d="M60 240
+      C100 236, 150 232, 200 235
+      C250 238, 300 233, 350 236
+      C400 239, 450 234, 500 237
+      C550 240, 600 234, 650 236
+      C700 238, 750 233, 800 236
+      C830 238, 840 240, 840 240
+      Z"
+      fill="#e8a542" opacity="0.15"/>
+    <path d="M60 240
+      C100 244, 150 248, 200 245
+      C250 242, 300 247, 350 244
+      C400 241, 450 246, 500 243
+      C550 240, 600 246, 650 244
+      C700 242, 750 247, 800 244
+      C830 242, 840 240, 840 240
+      Z"
+      fill="#e8a542" opacity="0.1"/>
   </g>
 </svg>
