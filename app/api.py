@@ -234,8 +234,9 @@ async def demo_summarize(record_id: str, req: SummarizeRequest):
         return JSONResponse({"error": "Record is not completed"}, status_code=400)
     await asyncio.sleep(2)
     prompt = req.prompt.strip()
-    summary_with_title = f"{record['title']}\n\n{DEMO_SUMMARY}"
-    save_summary(record_id, summary_with_title, prompt)
+    summary_with_title = f"# {record['title']}\n\n{DEMO_SUMMARY}"
+    if not save_summary(record_id, summary_with_title, prompt):
+        return JSONResponse({"error": "Failed to save summary"}, status_code=500)
     return {"summary": summary_with_title, "prompt": prompt}
 
 
@@ -506,8 +507,9 @@ async def summarize(record_id: str, req: SummarizeRequest):
         logger.error("Summarize error for %s: %s", record_id, e, exc_info=True)
         return JSONResponse({"error": f"Summarization failed: {e}"}, status_code=500)
     prompt = req.prompt.strip()
-    summary_with_title = f"{record['title']}\n\n{summary}"
-    save_summary(record_id, summary_with_title, prompt)
+    summary_with_title = f"# {record['title']}\n\n{summary}"
+    if not save_summary(record_id, summary_with_title, prompt):
+        return JSONResponse({"error": "Failed to save summary"}, status_code=500)
     return {"summary": summary_with_title, "prompt": prompt}
 
 

@@ -93,6 +93,17 @@
 - Each provider entry includes `transcribe_model` and `summarize_model` — frontend passes these to all API calls
 - Provider only appears if its API key is configured; widget hidden when fewer than 2 providers available
 
+## Obsidian Export
+- "Obsidian" button exports directly to Obsidian via `obsidian://new` URI + clipboard
+- First click prompts for vault name + optional subfolder, stored in `localStorage` keys `tm_obsidian_vault` and `tm_obsidian_subfolder`
+- `exportToObsidian(id)` replaces `copyObsidianMarkdown(id)` — copies markdown to clipboard, then opens `obsidian://new?vault=...&file=...&clipboard&overwrite`
+- `buildObsidianMarkdown(id)` builds the frontmatter + body (reuses `formatObsidianDate`, `escapeYamlString`, `getFullRecord`)
+- `slugify(title)` generates the note filename (lowercase, hyphens, max 80 chars)
+- `showObsidianConfig(id)` / `addObsidianConfigUI(id, card)` — horizontal path bar (`VaultName / folder/path [Connect]`) with one-time setup hint
+- `clearObsidianConfig()` removes localStorage keys; "Reset vault" link appears in card actions when vault is configured
+- Fallback: if Obsidian isn't installed, markdown is still on clipboard for manual paste
+- Toast: "Sent to Obsidian"
+
 ## Duration Limit
 - "First N min" toggle + input in the frontend, sends `duration_limit` in minutes
 - API converts minutes → seconds (`* 60`) before storage and passing to `prepare_chunks()`

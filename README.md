@@ -37,6 +37,7 @@
 - **History** with status tracking — persists across page refreshes and server restarts
 - **Show in Finder** — reveal any saved transcript file on disk
 - **Copy / Download** — tab-aware copy (transcript or summary) to clipboard, or save as `.txt`
+- **Obsidian export** — export directly to Obsidian vault via URI scheme (vault config remembered in localStorage)
 - **Markdown-based storage** — each transcript is a `.md` file, no database
 - **Playlist rejection** — only single video URLs accepted
 
