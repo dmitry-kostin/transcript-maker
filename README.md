@@ -17,7 +17,7 @@
 # 🍭 Transcript Maker – Watch Videos Faster Reading Them
 
 <p align="center">
-  <img width="754" height="944" alt="image" src="https://github.com/user-attachments/assets/39fd8b3f-148d-4e0b-8be4-71f1b63f14f1" />
+  <img width="1492" height="1926" alt="image" src="https://github.com/user-attachments/assets/53481b2f-97c7-4015-a772-5b037979eccb" />
 </p>
 
 ## Features
