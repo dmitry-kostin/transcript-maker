@@ -44,6 +44,18 @@
 **Storage**
 - **Markdown files** — plain `.md` with YAML frontmatter, no database
 
+## UI
+
+<p align="center">
+  <strong>AI summarization prompt</strong><br><br>
+  <img width="670" alt="AI summarization prompt" src="https://github.com/user-attachments/assets/21e0d473-9d9e-4ee9-83d9-af0f916eb555" />
+</p>
+
+<p align="center">
+  <strong>Obsidian vault connection</strong><br><br>
+  <img width="670" alt="Obsidian vault connection" src="https://github.com/user-attachments/assets/ddac3de0-5880-40c6-b5d2-2ce985a83593" />
+</p>
+
 ## Tech Stack
 
 - Python 3.11+, FastAPI, uvicorn

@@ -1002,6 +1002,7 @@ button:active:not(:disabled) {
   border: none;
   outline: none;
   resize: none;
+  overflow: hidden;
 }
 
 .summarize-input::placeholder {

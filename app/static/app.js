@@ -644,7 +644,8 @@ async function exportToObsidian(id) {
   await navigator.clipboard.writeText(result.markdown);
 
   const subfolder = localStorage.getItem("tm_obsidian_subfolder") || "";
-  const filename = (result.title || "Untitled").replace(/[\\/:*?"<>|]/g, "-").trim();
+  const suffix = result.isSummary ? " (Summary)" : " (Transcript)";
+  const filename = ((result.title || "Untitled") + suffix).replace(/[\\/:*?"<>|]/g, "-").trim();
   const filePath = subfolder ? `${subfolder}/${filename}` : filename;
 
   const uri = `obsidian://new?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(filePath)}&clipboard&overwrite`;
@@ -1077,7 +1078,7 @@ function addPromptUI(id, card) {
   prompt.addEventListener("click", (e) => e.stopPropagation());
   prompt.innerHTML = `
     <div class="summarize-bar">
-      <textarea class="summarize-input" rows="2">${localStorage.getItem("tm_summarize_prompt") || "Summarize this transcript concisely, highlighting key points and main topics discussed."}</textarea>
+      <textarea class="summarize-input" rows="2" placeholder="Summarize this transcript concisely, highlighting key points and main topics discussed.">${localStorage.getItem("tm_summarize_prompt") || ""}</textarea>
       <div class="summarize-bar-actions">
         <button class="summarize-generate-btn" onclick="generateSummary('${id}')">
           <span>Generate</span>
@@ -1096,6 +1097,15 @@ function addPromptUI(id, card) {
     const content = card.querySelector(".card-content");
     content.after(prompt);
   }
+
+  // Auto-grow textarea to fit content
+  const textarea = prompt.querySelector(".summarize-input");
+  const autoGrow = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = textarea.scrollHeight + "px";
+  };
+  textarea.addEventListener("input", autoGrow);
+  autoGrow();
 }
 
 async function generateSummary(id) {
