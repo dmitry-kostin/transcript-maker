@@ -28,6 +28,13 @@ async def summarize_text(text: str, prompt: str = "", model: str = "") -> str:
         ],
         temperature=0.3,
     )
-    summary = response.choices[0].message.content.strip()
-    logger.info("Summary generated: %d chars", len(summary))
+    finish_reason = response.choices[0].finish_reason if response.choices else "no_choices"
+    content = response.choices[0].message.content if response.choices else None
+    if not content or not content.strip():
+        logger.error("Summarize API returned empty content (model=%s, finish_reason=%s)", model, finish_reason)
+        raise RuntimeError("Summarization returned empty response")
+    summary = content.strip()
+    if finish_reason != "stop":
+        logger.warning("Summarize finish_reason=%s (model=%s, may be truncated)", finish_reason, model)
+    logger.info("Summary generated: %d chars, %d words (model=%s, finish_reason=%s)", len(summary), len(summary.split()), model, finish_reason)
     return summary

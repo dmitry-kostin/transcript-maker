@@ -333,15 +333,18 @@ async def transcribe(req: TranscribeRequest, request: Request):
             # Transcribe (with chunk cache for resume)
             cached_parts = load_chunk_cache(record_id, actual_model, diarize_flag, len(chunks))
             transcript_parts = list(cached_parts)
+            if cached_parts:
+                logger.info("Loaded %d cached chunks for %s", len(cached_parts), record_id)
             chunk_times: list[float] = []
             for i, chunk_path in enumerate(chunks):
+                chunk_size_mb = chunk_path.stat().st_size / (1024 * 1024)
                 if i < len(cached_parts):
-                    logger.info("Chunk %d/%d cached, skipping", i + 1, len(chunks))
+                    logger.info("Chunk %d/%d cached (%d words), skipping", i + 1, len(chunks), len(cached_parts[i].split()))
                     if len(chunks) > 1:
                         yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Chunk {i+1} of {len(chunks)} (cached)", "record_id": record_id, "chunk": i + 1, "chunks_total": len(chunks)})}
                     continue
                 if await request.is_disconnected():
-                    logger.warning("Client disconnected during transcription")
+                    logger.warning("Client disconnected before chunk %d/%d", i + 1, len(chunks))
                     break
                 progress_data: dict = {"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id, "chunk": i + 1, "chunks_total": len(chunks)}
                 if chunk_times and len(chunks) > 1:
@@ -349,26 +352,31 @@ async def transcribe(req: TranscribeRequest, request: Request):
                     remaining = len(chunks) - i
                     progress_data["eta_seconds"] = round(avg * remaining)
                 yield {"event": "progress", "data": json.dumps(progress_data)}
+                logger.info("Transcribing chunk %d/%d (%.1f MB) for %s", i + 1, len(chunks), chunk_size_mb, record_id)
                 t0 = time.monotonic()
                 text = await transcribe_chunk(chunk_path, model=actual_model, diarize=diarize_flag)
                 elapsed = time.monotonic() - t0
                 chunk_times.append(elapsed)
-                if len(chunks) > 1:
-                    avg = sum(chunk_times) / len(chunk_times)
-                    logger.info("Chunk %d/%d took %.1fs (avg %.1fs/chunk)", i + 1, len(chunks), elapsed, avg)
+                words = len(text.split()) if text else 0
+                logger.info("Chunk %d/%d done: %d words, %.1fs, %.1f MB for %s", i + 1, len(chunks), words, elapsed, chunk_size_mb, record_id)
+                if not text.strip():
+                    logger.error("Chunk %d/%d returned empty text for %s, aborting", i + 1, len(chunks), record_id)
+                    raise RuntimeError(f"Chunk {i + 1} of {len(chunks)} returned empty transcription")
                 transcript_parts.append(text)
                 save_chunk_cache(record_id, actual_model, diarize_flag, len(chunks), transcript_parts)
 
             # Guard: don't save partial transcript if client disconnected
             if await request.is_disconnected():
-                logger.warning("Client disconnected, leaving record as in_progress")
+                logger.warning("Client disconnected after chunk loop for %s, not saving", record_id)
                 return
 
+            total_words = sum(len(p.split()) for p in transcript_parts)
+            logger.info("All %d chunks done for %s: %d total words", len(transcript_parts), record_id, total_words)
             full_text = f"{title}\n\n{' '.join(transcript_parts)}"
             if not complete_record(record_id, full_text):
                 logger.warning("Transcription succeeded but history write failed for %s", record_id)
             delete_chunk_cache(record_id)
-            logger.info("Transcription done: %s", record_id)
+            logger.info("Transcription done: %s (%d words saved)", record_id, total_words)
             yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": duration, "duration_limit": limit_sec, "title": title, "record_id": record_id, "model": stored_model})}
             yield {"event": "done", "data": "{}"}
 
@@ -468,15 +476,18 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
             # Transcribe (with chunk cache for resume)
             cached_parts = load_chunk_cache(record_id, actual_model, diarize_flag, len(chunks))
             transcript_parts = list(cached_parts)
+            if cached_parts:
+                logger.info("Loaded %d cached chunks for %s", len(cached_parts), record_id)
             chunk_times: list[float] = []
             for i, chunk_path in enumerate(chunks):
+                chunk_size_mb = chunk_path.stat().st_size / (1024 * 1024)
                 if i < len(cached_parts):
-                    logger.info("Chunk %d/%d cached, skipping", i + 1, len(chunks))
+                    logger.info("Chunk %d/%d cached (%d words), skipping", i + 1, len(chunks), len(cached_parts[i].split()))
                     if len(chunks) > 1:
                         yield {"event": "progress", "data": json.dumps({"stage": "transcribing", "message": f"Chunk {i+1} of {len(chunks)} (cached)", "record_id": record_id, "chunk": i + 1, "chunks_total": len(chunks)})}
                     continue
                 if await request.is_disconnected():
-                    logger.warning("Client disconnected during transcription")
+                    logger.warning("Client disconnected before chunk %d/%d for %s", i + 1, len(chunks), record_id)
                     break
                 progress_data: dict = {"stage": "transcribing", "message": f"Transcribing{f' chunk {i+1} of {len(chunks)}' if len(chunks) > 1 else ''}...", "record_id": record_id, "chunk": i + 1, "chunks_total": len(chunks)}
                 if chunk_times and len(chunks) > 1:
@@ -484,26 +495,31 @@ async def retranscribe(record_id: str, req: RetranscribeRequest, request: Reques
                     remaining = len(chunks) - i
                     progress_data["eta_seconds"] = round(avg * remaining)
                 yield {"event": "progress", "data": json.dumps(progress_data)}
+                logger.info("Transcribing chunk %d/%d (%.1f MB) for %s", i + 1, len(chunks), chunk_size_mb, record_id)
                 t0 = time.monotonic()
                 text = await transcribe_chunk(chunk_path, model=actual_model, diarize=diarize_flag)
                 elapsed = time.monotonic() - t0
                 chunk_times.append(elapsed)
-                if len(chunks) > 1:
-                    avg = sum(chunk_times) / len(chunk_times)
-                    logger.info("Chunk %d/%d took %.1fs (avg %.1fs/chunk)", i + 1, len(chunks), elapsed, avg)
+                words = len(text.split()) if text else 0
+                logger.info("Chunk %d/%d done: %d words, %.1fs, %.1f MB for %s", i + 1, len(chunks), words, elapsed, chunk_size_mb, record_id)
+                if not text.strip():
+                    logger.error("Chunk %d/%d returned empty text for %s, aborting", i + 1, len(chunks), record_id)
+                    raise RuntimeError(f"Chunk {i + 1} of {len(chunks)} returned empty transcription")
                 transcript_parts.append(text)
                 save_chunk_cache(record_id, actual_model, diarize_flag, len(chunks), transcript_parts)
 
             # Guard: don't save partial transcript if client disconnected
             if await request.is_disconnected():
-                logger.warning("Client disconnected, leaving record as in_progress")
+                logger.warning("Client disconnected after chunk loop for %s, not saving", record_id)
                 return
 
+            total_words = sum(len(p.split()) for p in transcript_parts)
+            logger.info("All %d chunks done for %s: %d total words", len(transcript_parts), record_id, total_words)
             full_text = f"{record['title']}\n\n{' '.join(transcript_parts)}"
             if not complete_record(record_id, full_text):
                 logger.warning("Retranscription succeeded but history write failed for %s", record_id)
             delete_chunk_cache(record_id)
-            logger.info("Retranscription done: %s", record_id)
+            logger.info("Retranscription done: %s (%d words saved)", record_id, total_words)
             yield {"event": "transcript", "data": json.dumps({"text": full_text, "duration_seconds": record["duration"], "duration_limit": limit_sec, "title": record["title"], "record_id": record_id, "model": stored_model})}
             yield {"event": "done", "data": "{}"}
 

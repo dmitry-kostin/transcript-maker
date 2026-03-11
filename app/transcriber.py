@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_SIZE_MB = 25.0
 MAX_GEMINI_RETRIES = 3
-MAX_CHUNK_DURATION_SECONDS = 1200  # Whisper API rejects >1400s; use 1200s safety margin
+MAX_CHUNK_DURATION_SECONDS = 600  # Whisper silently truncates output on long chunks; 10min keeps output well within token limits
 
 
 def resolve_model(requested: str, diarize: bool = False) -> tuple[str, bool]:
@@ -94,6 +94,7 @@ def prepare_chunks(audio_path: Path, duration_limit: int | None = None) -> list[
 
     chunks = []
     offset = 0.0
+    total_chunk_duration = 0.0
     while offset < duration:
         chunk_path = audio_path.parent / f"{audio_path.stem}_chunk{len(chunks)}.{settings.audio_format}"
         subprocess.run(
@@ -112,10 +113,14 @@ def prepare_chunks(audio_path: Path, duration_limit: int | None = None) -> list[
             raise RuntimeError(
                 f"Chunk {len(chunks)} is {chunk_size_mb:.1f} MB, exceeds {MAX_UPLOAD_SIZE_MB} MB limit"
             )
+        actual_chunk_dur = _get_duration(chunk_path)
+        total_chunk_duration += actual_chunk_dur
+        logger.info("Chunk %d: offset=%.1fs, %.1f MB, %.1fs actual duration", len(chunks), offset, chunk_size_mb, actual_chunk_dur)
         chunks.append(chunk_path)
         offset += chunk_duration
 
-    logger.info("Split into %d chunks", len(chunks))
+    logger.info("Split into %d chunks (total chunk duration=%.1fs, original=%.1fs, diff=%.1fs)",
+                len(chunks), total_chunk_duration, duration, total_chunk_duration - duration)
     return chunks
 
 
@@ -143,8 +148,11 @@ async def _transcribe_base(chunk_path: Path, model: str) -> str:
             file=f,
             response_format="text",
         )
+    if not response:
+        logger.error("API returned empty response for %s (model=%s, response=%r)", chunk_path.name, model, response)
+        return ""
     text = response.strip()
-    logger.info("Chunk complete (%d words)", len(text.split()))
+    logger.info("Transcribed %s: %d words, %d chars", chunk_path.name, len(text.split()), len(text))
     return text
 
 
@@ -160,15 +168,23 @@ async def _transcribe_diarize(chunk_path: Path, model: str) -> str:
                 response_format="diarized_json",
                 chunking_strategy="auto",
             )
+    if not response or not hasattr(response, "segments"):
+        logger.error("Diarize API returned unexpected response for %s (model=%s, response=%r)", chunk_path.name, model, response)
+        return ""
+    segments = response.segments or []
+    logger.info("Diarize response for %s: %d segments, finish_reason=%s", chunk_path.name, len(segments), getattr(response, "finish_reason", "n/a"))
     lines = []
-    for seg in response.segments:
+    for seg in segments:
         s = seg if isinstance(seg, dict) else seg.__dict__
         speaker = s.get("speaker") or "Unknown"
         seg_text = s.get("text", "").strip()
         if seg_text:
             lines.append(f"{speaker}: {seg_text}")
     text = "\n".join(lines) if lines else response.text or ""
-    logger.info("Chunk complete (%d words, diarized)", len(text.split()))
+    if not text:
+        logger.error("Diarize produced no text for %s (segments=%d, fallback_text=%r)", chunk_path.name, len(segments), response.text)
+    else:
+        logger.info("Transcribed %s: %d words, %d chars (diarized, %d segments)", chunk_path.name, len(text.split()), len(text), len(segments))
     return text
 
 
@@ -210,16 +226,22 @@ async def _transcribe_gemini(chunk_path: Path, model: str, diarize: bool) -> str
             ],
             temperature=0.0,
         )
-        content = response.choices[0].message.content
+        finish_reason = response.choices[0].finish_reason if response.choices else "no_choices"
+        content = response.choices[0].message.content if response.choices else None
+        usage = getattr(response, "usage", None)
+        usage_str = f"prompt={usage.prompt_tokens}, completion={usage.completion_tokens}" if usage else "n/a"
+
         if content:
             text = content.strip()
-            logger.info("Gemini chunk complete (%d words, diarize=%s)", len(text.split()), diarize)
+            logger.info("Transcribed %s via Gemini: %d words, %d chars (diarize=%s, finish_reason=%s, usage=%s)",
+                        chunk_path.name, len(text.split()), len(text), diarize, finish_reason, usage_str)
+            if finish_reason != "stop":
+                logger.warning("Gemini finish_reason=%s for %s (may be truncated)", finish_reason, chunk_path.name)
             return text
 
-        finish_reason = response.choices[0].finish_reason if response.choices else "no_choices"
         logger.warning(
-            "Gemini returned empty content for %s (attempt %d/%d, finish_reason=%s)",
-            chunk_path.name, attempt, MAX_GEMINI_RETRIES, finish_reason,
+            "Gemini returned empty content for %s (attempt %d/%d, finish_reason=%s, usage=%s)",
+            chunk_path.name, attempt, MAX_GEMINI_RETRIES, finish_reason, usage_str,
         )
         if attempt < MAX_GEMINI_RETRIES:
             await asyncio.sleep(2 ** (attempt - 1))

@@ -34,6 +34,9 @@ let abortController = null;
 let pollTimer = null;
 let lastHistoryIds = "";
 let activeRecordId = null;
+let etaInterval = null;
+let etaRemaining = 0;
+let etaBaseMessage = "";
 const bodyCache = new Map();
 const summaryCache = new Map();
 
@@ -122,6 +125,30 @@ function formatEta(seconds) {
   return s > 0 ? `~ ${m}m ${s}s` : `~ ${m}m`;
 }
 
+function startEtaCountdown(seconds, baseMessage) {
+  stopEtaCountdown();
+  etaRemaining = seconds;
+  etaBaseMessage = baseMessage;
+  etaInterval = setInterval(() => {
+    etaRemaining--;
+    if (etaRemaining <= 0) {
+      progressStatus.textContent = etaBaseMessage;
+      stopEtaCountdown();
+      return;
+    }
+    progressStatus.textContent = etaBaseMessage + " " + formatEta(etaRemaining);
+  }, 1000);
+}
+
+function stopEtaCountdown() {
+  if (etaInterval) {
+    clearInterval(etaInterval);
+    etaInterval = null;
+  }
+  etaRemaining = 0;
+  etaBaseMessage = "";
+}
+
 // ─── State management ───
 
 function setState(newState, data = {}) {
@@ -172,6 +199,7 @@ function setState(newState, data = {}) {
 function resetUI() {
   progressEl.hidden = true;
   progressStatus.textContent = "";
+  stopEtaCountdown();
   stopWaveAnimation();
   activeResultEl.innerHTML = "";
   activeRecordId = null;
@@ -768,6 +796,7 @@ async function runSSE(fetchUrl, fetchBody) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let currentEvent = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -777,7 +806,6 @@ async function runSSE(fetchUrl, fetchBody) {
       const lines = buffer.split("\n");
       buffer = lines.pop();
 
-      let currentEvent = null;
       for (const line of lines) {
         if (line.startsWith("event:")) {
           currentEvent = line.slice(6).trim();
@@ -786,6 +814,7 @@ async function runSSE(fetchUrl, fetchBody) {
           if (!raw) continue;
           const data = JSON.parse(raw);
           handleEvent(currentEvent, data);
+          currentEvent = null;
         }
       }
     }
@@ -837,8 +866,13 @@ function handleEvent(event, data) {
       } else if (data.stage === "processing") {
         setState(AppState.PROCESSING, { message: data.message });
       } else if (data.stage === "transcribing") {
-        const eta = data.eta_seconds ? ` ${formatEta(data.eta_seconds)}` : "";
-        setState(AppState.TRANSCRIBING, { message: data.message + eta });
+        if (data.eta_seconds) {
+          setState(AppState.TRANSCRIBING, { message: data.message + " " + formatEta(data.eta_seconds) });
+          startEtaCountdown(data.eta_seconds, data.message);
+        } else {
+          stopEtaCountdown();
+          setState(AppState.TRANSCRIBING, { message: data.message });
+        }
       }
       break;
 
