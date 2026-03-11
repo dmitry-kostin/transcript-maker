@@ -229,11 +229,11 @@ class TestPrepareChunks:
         """File under size limit but over duration limit → must chunk."""
         audio = tmp_path / "long.mp3"
         audio.write_bytes(b"\x00" * 5_000_000)  # ~5 MB, well under 24 MB
-        long_duration = 3000.0  # 50 minutes, way over 1200s
+        long_duration = 3000.0  # 50 minutes, way over 600s
 
-        chunk_paths = [tmp_path / "long_chunk0.mp3", tmp_path / "long_chunk1.mp3", tmp_path / "long_chunk2.mp3"]
-        for p in chunk_paths:
-            p.write_bytes(b"\x00" * 1_000_000)
+        # 3000s / 600s = 5 chunks
+        for i in range(5):
+            (tmp_path / f"long_chunk{i}.mp3").write_bytes(b"\x00" * 1_000_000)
 
         call_count = 0
 
@@ -246,9 +246,7 @@ class TestPrepareChunks:
              patch("app.transcriber.subprocess.run", side_effect=fake_ffmpeg):
             chunks = prepare_chunks(audio)
 
-        assert len(chunks) == 3  # 3000s / 1200s = 2.5 → 3 chunks
-        # Verify ffmpeg was called with chunk duration capped at MAX_CHUNK_DURATION_SECONDS
-        first_call_args = chunks  # just verify count; duration checked via call count
+        assert len(chunks) == 5  # 3000s / 600s = 5 chunks
 
     def test_large_file_short_duration_triggers_chunking(self, tmp_path):
         """File over size limit but short duration → chunk by size."""
