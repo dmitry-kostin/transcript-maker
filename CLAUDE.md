@@ -16,7 +16,7 @@
   - `TM_OPENAI_SUMMARIZE_MODEL` (default: `gpt-4o`)
   - `TM_GEMINI_TRANSCRIBE_MODEL` (default: `gemini-3-flash-preview`)
   - `TM_GEMINI_SUMMARIZE_MODEL` (default: `gemini-3-flash-preview`)
-- Tests set a dummy key in `conftest.py` — no real key needed for unit tests
+- No real key needed for unit tests — tests that construct a client monkeypatch `settings.openai_api_key` to a dummy value per-test (never globally, so integration tests still use the real key)
 
 ## Demo Mode
 - Open `http://localhost:8000?demo` — frontend routes requests to `/api/demo/` endpoints

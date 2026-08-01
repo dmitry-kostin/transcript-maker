@@ -252,9 +252,17 @@ class TestGetStoredModel:
 
 
 class TestGetClient:
-    def test_openai_client(self):
+    def test_openai_client(self, monkeypatch):
+        import app.clients as mod
+        monkeypatch.setattr(mod.settings, "openai_api_key", "sk-test")
         client = get_client("gpt-4o-transcribe")
         assert client.base_url.host == "api.openai.com"
+
+    def test_openai_client_missing_key(self, monkeypatch):
+        import app.clients as mod
+        monkeypatch.setattr(mod.settings, "openai_api_key", "")
+        with pytest.raises(ValueError, match="TM_OPENAI_API_KEY"):
+            get_client("gpt-4o-transcribe")
 
     def test_gemini_client_with_key(self, monkeypatch):
         import app.clients as mod

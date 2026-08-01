@@ -9,19 +9,19 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.115"
-uvicorn = {extras = ["standard"], version = "^0.34"}
-yt-dlp = ">=2025"
-openai = "^1.60"
-pydantic-settings = "^2.7"
-sse-starlette = "^2.2"
+fastapi = "^0.141"
+uvicorn = {extras = ["standard"], version = "^0.52"}
+yt-dlp = ">=2026.7.4"
+openai = "^2.52"
+pydantic-settings = "^2.14"
+sse-starlette = "^3.4"
 pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
-pytest-asyncio = "^0.25"
+pytest = "^9.1"
+pytest-asyncio = "^1.4"
 httpx = "^0.28"
-json-repair = "^0.58.0"
+json-repair = "^0.61"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
