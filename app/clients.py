@@ -25,4 +25,8 @@ def get_client(model: str) -> AsyncOpenAI:
             api_key=settings.google_api_key,
             base_url=GOOGLE_BASE_URL,
         )
+    if not settings.openai_api_key:
+        raise ValueError(
+            "TM_OPENAI_API_KEY env var is required when using an OpenAI model"
+        )
     return AsyncOpenAI(api_key=settings.openai_api_key)
