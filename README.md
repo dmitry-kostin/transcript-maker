@@ -112,6 +112,7 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `GOOGLE_API_KEY` | *(optional)* | Google API key for Gemini models (no `TM_` prefix) |
 | `TM_TEMP_DIR` | `./tmp` | Directory for temporary audio files |
 | `TM_RESULTS_DIR` | `./results` | Directory for saved transcript `.md` files |
+| `TM_LOG_FILE` | `./logs/app.log` | Rotating log file mirroring console output (empty string disables) |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
 | `TM_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | Default transcription model (supports `gemini-*`) |

@@ -1,6 +1,11 @@
+import os
 from pathlib import Path
 
 import pytest
+
+# Tests import app.main, which installs a file log handler — disable it so test
+# runs don't append to logs/app.log. Must happen before app.config is imported.
+os.environ.setdefault("TM_LOG_FILE", "")
 
 
 @pytest.fixture

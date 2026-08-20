@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     google_api_key: str = Field(default="", validation_alias="GOOGLE_API_KEY")
     temp_dir: str = str(PROJECT_ROOT / "tmp")
     results_dir: str = str(PROJECT_ROOT / "results")
+    log_file: str = str(PROJECT_ROOT / "logs" / "app.log")
     max_chunk_size_mb: float = 24.0
     audio_format: str = "mp3"
     summarize_model: str = "gpt-4o"
