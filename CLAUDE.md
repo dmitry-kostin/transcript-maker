@@ -2,6 +2,7 @@
 
 ## Commands
 - `poetry run python run.py` — start dev server on :8000
+- `tail -f logs/app.log` — follow server logs (written even when the server runs in another terminal)
 - `poetry run pytest` — run unit + endpoint tests (no API calls)
 - `poetry run pytest -m integration` — run integration tests (needs real API key + internet)
 - `poetry run pytest tests/test_history.py -v` — run a specific test module
@@ -71,6 +72,10 @@
 - Custom formatter configured in `app/main.py` (not `run.py`); `run.py` passes `log_config=None` to uvicorn
 - Applies to `app`, `uvicorn`, `uvicorn.error`, `uvicorn.access` loggers — propagation disabled
 - Startup log shows enabled providers and active models
+- Everything is mirrored to a rotating file at `logs/app.log` (`TM_LOG_FILE`, 5 MB × 3 backups) so logs are readable while the server runs in another process — `tail -f logs/app.log`, or `grep -n "=== startup ===" logs/app.log | tail -1` to find where the current run begins
+- Console handler uses `%H:%M:%S`; file handler uses full `%Y-%m-%d %H:%M:%S` since the file spans days
+- `TM_LOG_FILE=""` disables file logging; `tests/conftest.py` sets it so test runs don't append to the log
+- `logs/` is gitignored
 
 ## Testing Conventions
 - `tmp_results` fixture monkeypatches `history.RESULTS_DIR` to a temp dir

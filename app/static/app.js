@@ -154,6 +154,12 @@ function stopEtaCountdown() {
 function setState(newState, data = {}) {
   currentState = newState;
 
+  // The ETA countdown writes to progressStatus on a 1s timer. Any state other
+  // than TRANSCRIBING owns that text now, so kill the timer first — otherwise a
+  // tick landing after the transition overwrites "Done!" / "Cancelled." with the
+  // stale chunk message and leaves the UI looking stuck.
+  if (newState !== AppState.TRANSCRIBING) stopEtaCountdown();
+
   // Layout state: idle vs active
   const isIdle = newState === AppState.IDLE;
   app.dataset.state = isIdle ? "idle" : "active";
