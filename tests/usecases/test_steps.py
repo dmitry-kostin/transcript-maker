@@ -1,17 +1,14 @@
-"""Real and demo ``Steps``. Demo mode is the real use cases run against the simulated services."""
+"""Demo mode is the real use cases run against the simulated ``Steps``; and the null steps it is made of."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 import app.services.demo as demo
 from app.config import settings
-from app.domain.model_policy import ModelPolicy
-from app.services.clients import ClientFactory
 from app.services.demo import DEMO_SUMMARY, DEMO_TRANSCRIPT
-from app.usecases.errors import ModelNotAvailable, RecordFromOtherMode
-from app.usecases.steps import AnyModel, ConfiguredModels, NoStoredAudio, Steps, StoredAudio
+from app.usecases.errors import RecordFromOtherMode
+from app.usecases.steps import AnyModel, NoStoredAudio
 from tests.usecases.conftest import URL
 
 
@@ -93,16 +90,7 @@ class TestDemoNeverTouchesRealRecords(DemoTest):
         assert env.history.summaries.get(rid) is None
 
 
-class TestAudioCaches:
-    def test_stored_audio_is_the_cache_in_results(self, env):
-        rid = env.history.records.create("Vid", URL, 60)
-        cache = StoredAudio(env.history)
-        assert cache.for_record(rid) is None and cache.for_url(URL) is None
-        cache.save(rid, env.audio)
-        assert cache.for_record(rid) == env.history.audio.path_for(rid)
-        audio, record = cache.for_url(URL)
-        assert (audio, record["id"]) == (cache.for_record(rid), rid)
-
+class TestNullSteps:
     def test_no_stored_audio_keeps_and_finds_nothing(self, env):
         rid = env.history.records.create("Vid", URL, 60)
         env.history.audio.save(rid, env.audio)  # real audio is there…
@@ -111,32 +99,5 @@ class TestAudioCaches:
         assert cache.for_record(rid) is None  # …and still not offered
         assert cache.for_url(URL) is None
 
-
-class TestModelChecks:
-    def test_model_without_an_api_key_is_not_available(self, monkeypatch):
-        monkeypatch.setattr(settings, "google_api_key", "")
-        with pytest.raises(ModelNotAvailable, match="GOOGLE_API_KEY"):
-            ConfiguredModels(ClientFactory(settings, ModelPolicy())).require("gemini-3.5-transcribe")
-
-    def test_model_with_an_api_key_is_available(self, monkeypatch):
-        monkeypatch.setattr(settings, "openai_api_key", "sk-test")
-        ConfiguredModels(ClientFactory(settings, ModelPolicy())).require("gpt-transcribe")
-
     def test_any_model_never_refuses(self):
         AnyModel().require("whatever")
-
-
-class TestStepsWiring:
-    def test_real_steps_are_the_services_own_methods(self, history):
-        downloader, chunker, transcriber, summarizer = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-        steps = Steps.for_real(downloader, chunker, transcriber, summarizer, MagicMock(), history)
-        assert steps.download is downloader.download
-        assert steps.prepare_chunks is chunker.prepare_chunks
-        assert steps.transcribe_chunk is transcriber.transcribe_chunk
-        assert steps.summarize is summarizer.summarize
-        assert steps.demo is False
-
-    def test_demo_steps_are_marked_and_cache_nothing(self, env):
-        steps = env.demo_steps()
-        assert steps.demo is True
-        assert isinstance(steps.audio_cache, NoStoredAudio)

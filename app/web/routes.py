@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
-from app.storage.results_directory import RecordId
+from app.domain.record import RecordId
 from app.usecases.errors import UseCaseError
 from app.usecases.maintenance import Maintenance
 from app.usecases.providers import Providers

@@ -11,20 +11,19 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.config import Settings
 from app.domain.limits import DurationLimits
 from app.domain.model_policy import ModelPolicy
-from app.services.downloader import DownloadError
+from app.domain.record import STATUS_IN_PROGRESS, RecordLifecycle
 from app.services.temp_files import TempDirectory
 from app.storage.history import History
-from app.storage.record_store import STATUS_IN_PROGRESS
 from app.usecases.active_runs import ActiveRun, ActiveRuns
 from app.usecases.errors import RecordBusy
 from app.usecases.records import Records
-from app.usecases.steps import Steps
+from app.usecases.steps import DownloadFailed, Steps
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +71,16 @@ class RunRequest:
     existing: dict | None  # the record being re-transcribed, if any
 
 
+@dataclass(frozen=True)
+class AcquiredAudio:
+    """A run's audio and what is known about the video it came from."""
+
+    path: Path
+    title: str
+    duration: float  # seconds, of the whole video
+    needs_caching: bool  # False when the record already has this audio beside it
+
+
 class Transcription:
     def __init__(
         self,
@@ -114,7 +123,7 @@ class Transcription:
         afterwards its previous transcript stays in the file unless the new one completes.
         """
         record = self._records.load_to_change(record_id, demo=self._tools.steps.demo)
-        if record["status"] == STATUS_IN_PROGRESS:
+        if RecordLifecycle.is_in_progress(record):
             # The early answer; RecordStore.reset() refusing an in-progress record is the actual guard
             raise RecordBusy
         return self._start(record["url"], requested_model, duration_limit, is_cancelled, existing=record)
@@ -158,10 +167,7 @@ class TranscriptionRun:
         self._request = request
         self._existing = request.existing
         self._record_id: str | None = None  # the record this run has put in progress — None until it has
-        self._audio_path: Path | None = None
-        self._audio_needs_caching = False
-        self._title = ""
-        self._duration: float = 0
+        self._audio: AcquiredAudio | None = None  # this run's own copy in tmp/ — None until it has one
         self._parts: list[str] = []
 
     async def events(self) -> AsyncIterator[Event]:
@@ -176,7 +182,7 @@ class TranscriptionRun:
             yield Events.error(str(e))
         except _RecordTaken:
             yield Events.error("Record is being processed by another request or no longer exists", self._target_id)
-        except DownloadError as e:
+        except DownloadFailed as e:
             logger.error("Download error: %s", e)
             yield self._failed(str(e), str(e))
         except Exception as e:
@@ -193,12 +199,14 @@ class TranscriptionRun:
 
         async for event in self._acquire_audio():
             yield event
+        # The one place the length rule is applied, wherever the audio came from
+        self._refuse_if_too_long(self._audio.duration)
         await self._stop_if_cancelled("after download")
 
         await self._open_record(run)
         yield Events.progress("processing", "Processing...", record_id=self._record_id)
 
-        chunks = await self._in_thread(self._steps.prepare_chunks, self._audio_path, request.duration_limit or None)
+        chunks = await self._in_thread(self._steps.prepare_chunks, self._audio.path, request.duration_limit or None)
         if len(chunks) > 1:
             yield Events.progress("transcribing", f"Audio split into {len(chunks)} chunks", record_id=self._record_id)
         async for event in self._transcribe_chunks(chunks):
@@ -210,40 +218,49 @@ class TranscriptionRun:
         yield Events.done()
 
     async def _acquire_audio(self) -> AsyncIterator[Event]:
-        """Put the audio in tmp/ — from the cache when there is one, otherwise by downloading."""
-        cached_audio = self._find_cached_audio()
-        if cached_audio:
+        """Put the audio in tmp/ as ``self._audio`` — from the cache when there is one, otherwise by downloading."""
+        cached = self._cached_audio()
+        if cached:
             yield Events.progress("downloading", "Using cached audio...")
             prefix = f"retranscribe_{self._existing['id']}" if self._existing else "cached"
             # A copy, so chunking never touches the cached original
-            self._audio_path = await self._in_thread(self._temp.copy_in, cached_audio, prefix)
-            # A new record gets its own copy; an existing one already has it
-            self._audio_needs_caching = not self._existing
+            own_copy = await self._in_thread(self._temp.copy_in, cached.path, prefix)
+            self._audio = replace(cached, path=own_copy)
             return
 
         yield Events.progress("downloading", "Downloading audio from YouTube...")
-        # The download step reports the length before fetching, so a too-long video costs no download
-        self._audio_path, duration, title = await self._steps.download(self._request.url, self._refuse_if_too_long)
-        file_size_mb = self._audio_path.stat().st_size / (1024 * 1024)
+        self._audio = await self._download()
+        file_size_mb = self._audio.path.stat().st_size / (1024 * 1024)
         yield Events.progress("downloading", f"Download complete ({file_size_mb:.1f} MB)")
-        self._audio_needs_caching = True
-        if not self._existing:
-            self._title, self._duration = title, duration
-            self._refuse_if_too_long(duration)  # the rule holds even if the download step did not ask
 
-    def _find_cached_audio(self) -> Path | None:
-        """Cached audio for this request, taking title and duration from the record it belongs to."""
+    def _cached_audio(self) -> AcquiredAudio | None:
+        """Audio kept from an earlier transcription, described by the record it belongs to.
+
+        Its ``path`` is the cached original: the record's own audio when re-transcribing,
+        otherwise that of any earlier record of the same URL.
+        """
         cache = self._steps.audio_cache
         if self._existing:
-            self._title, self._duration = self._existing["title"], self._existing["duration"]
-            return cache.for_record(self._existing["id"])
-        cached = cache.for_url(self._request.url)
-        if not cached:
+            path = cache.for_record(self._existing["id"])
+            # The record already has this audio beside it
+            return self._audio_of(self._existing, path, needs_caching=False) if path else None
+        found = cache.for_url(self._request.url)
+        if not found:
             return None
-        audio, source_record = cached
-        self._title, self._duration = source_record["title"], source_record["duration"]
-        self._refuse_if_too_long(self._duration)
-        return audio
+        path, source_record = found
+        # A new record gets its own copy
+        return self._audio_of(source_record, path, needs_caching=True)
+
+    async def _download(self) -> AcquiredAudio:
+        """Fetch the audio. The step is told the length rule, so a too-long video is refused before it is fetched."""
+        path, duration, title = await self._steps.download(self._request.url, self._refuse_if_too_long)
+        if self._existing:
+            # A re-transcription keeps what the record says about its video
+            return self._audio_of(self._existing, path, needs_caching=True)
+        return AcquiredAudio(path, title, duration, needs_caching=True)
+
+    def _audio_of(self, record: dict, path: Path, needs_caching: bool) -> AcquiredAudio:
+        return AcquiredAudio(path, record["title"], record["duration"], needs_caching)
 
     async def _open_record(self, run: ActiveRun) -> None:
         """Put the record in progress — reset the existing one or create a new one — and keep its audio."""
@@ -254,17 +271,17 @@ class TranscriptionRun:
             self._record_id = self._existing["id"]
         else:
             self._record_id = records.create(
-                self._title,
+                self._audio.title,
                 request.url,
-                self._duration,
+                self._audio.duration,
                 model=request.model,
                 duration_limit=request.duration_limit,
                 demo=self._steps.demo,
             )
         run.record_id = self._record_id
-        if self._audio_needs_caching:
+        if self._audio.needs_caching:
             # Cached from the local copy (safe even if the original is deleted concurrently)
-            await self._in_thread(self._steps.audio_cache.save, self._record_id, self._audio_path)
+            await self._in_thread(self._steps.audio_cache.save, self._record_id, self._audio.path)
 
     async def _transcribe_chunks(self, chunks: list[Path]) -> AsyncIterator[Event]:
         """Transcribe each chunk into ``self._parts``, resuming from the chunk cache."""
@@ -321,9 +338,10 @@ class TranscriptionRun:
 
     def _save(self) -> Event:
         """Store the transcript — it always starts with the video title — and report it."""
-        full_text = f"{self._title}\n\n{' '.join(self._parts)}"
+        full_text = f"{self._audio.title}\n\n{' '.join(self._parts)}"
         if not self._history.records.complete(self._record_id, full_text):
-            logger.warning("Transcription succeeded but history write failed for %s", self._record_id)
+            # Never report a transcript that is not in the history
+            raise RuntimeError("The transcript could not be saved — its record is gone or unreadable")
         self._history.chunks.delete(self._record_id)
         logger.info(
             "Transcription done: %s (%d chunks, %d words saved)",
@@ -333,9 +351,9 @@ class TranscriptionRun:
         )
         return Events.transcript(
             text=full_text,
-            duration_seconds=self._duration,
+            duration_seconds=self._audio.duration,
             duration_limit=self._request.duration_limit,
-            title=self._title,
+            title=self._audio.title,
             record_id=self._record_id,
             model=self._request.model,
         )
@@ -372,8 +390,8 @@ class TranscriptionRun:
         if self._record_id and records.status(self._record_id) == STATUS_IN_PROGRESS:
             records.fail(self._record_id, "Transcription interrupted")
             logger.warning("Marked interrupted record as failed: %s", self._record_id)
-        if self._audio_path:
-            self._temp.remove_run_files(self._audio_path)
+        if self._audio:
+            self._temp.remove_run_files(self._audio.path)
 
     async def _in_thread(self, blocking: Callable, *args: object) -> object:
         """Run blocking file or ffmpeg work off the event loop."""

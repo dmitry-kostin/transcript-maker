@@ -1215,6 +1215,10 @@ async function deleteRecord(id) {
     }
     lastHistoryIds = "";
     loadHistory();
+  } else {
+    // e.g. 409: the record is being transcribed right now
+    const data = await res.json().catch(() => ({}));
+    showToast(data.error || "Could not delete");
   }
 }
 

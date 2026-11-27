@@ -6,17 +6,14 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.domain.record import STATUS_DONE, STATUS_ERROR, STATUS_IN_PROGRESS, RecordId, RecordLifecycle
 from app.storage.audio_cache import AudioCache
 from app.storage.chunk_cache import ChunkCache
 from app.storage.markdown_file import MarkdownFile
-from app.storage.results_directory import RecordId, ResultsDirectory
+from app.storage.results_directory import ResultsDirectory
 from app.storage.summary_store import SummaryStore
 
 logger = logging.getLogger(__name__)
-
-STATUS_IN_PROGRESS = "in_progress"
-STATUS_DONE = "done"
-STATUS_ERROR = "error"
 
 SLUG_MAX_LENGTH = 50
 
@@ -202,8 +199,8 @@ class RecordStore:
         stored value unless given — so a re-transcription that fails or is interrupted
         leaves the previous transcript in the file; only a successful one replaces it.
 
-        A record that is already in progress cannot be put in progress again: that is
-        how two concurrent re-transcriptions of one record are kept apart.
+        A move ``RecordLifecycle`` does not allow (in progress → in progress) is refused: that
+        is how two concurrent re-transcriptions of one record are kept apart.
         """
         path = self._directory.record_file(record_id)
         if not path:
@@ -212,7 +209,7 @@ class RecordStore:
         stored = self._parse(path)
         if not stored:
             return False
-        if status == STATUS_IN_PROGRESS and stored["status"] == STATUS_IN_PROGRESS:
+        if not RecordLifecycle.may_enter(stored["status"], status):
             logger.warning("Record %s is already in progress", record_id)
             return False
 

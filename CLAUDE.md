@@ -25,7 +25,7 @@
 
 ## Demo Mode
 - Open `http://localhost:8000?demo` — frontend routes requests to `/api/demo/` endpoints
-- Runs the real use-case classes built with `Steps.for_demo(DemoServices(settings))` (`app/usecases/steps.py`, `app/services/demo.py`): 5s download + 5s transcription with canned text, no real APIs called, no API key needed
+- Runs the real use-case classes built with `StepsFactory().demo(DemoServices(settings))` (`app/adapters.py`, `app/services/demo.py`): 5s download + 5s transcription with canned text, no real APIs called, no API key needed
 - Demo routes are `DemoWorkRoutes` (`app/web/demo_routes.py`), a subclass of the same `WorkRoutes` the real `/api` endpoints use, handed the demo use cases by `Wiring` — so validation, the 409 guard and failure handling are identical by construction
 - Demo never reads or writes the audio cache (`Steps.audio_cache` is a `NoStoredAudio`) — placeholder audio must not be picked up by a real transcription of the same URL
 - Demo records carry `demo: true` in their frontmatter. A record belongs to the mode that made it: demo retranscribe/summarize of a real record is refused with a 409 (it would replace a real transcript with placeholder text), and so is real retranscribe/summarize of a demo record (`Records.load_to_change()` in `usecases/records.py`)
@@ -46,11 +46,12 @@
     - `providers.py` — `Providers.available()` (backs `GET /api/providers` and the startup log)
     - `maintenance.py` — `Maintenance.clean_up()` (backs `POST /api/cleanup`) and `fail_records_left_by_previous_run()` (startup)
     - `active_runs.py` — `ActiveRuns`: in-memory registry of the transcriptions this process is running
-    - `steps.py` — `Steps` (the outside world as a bundle of operations) with `Steps.for_real(...)` / `Steps.for_demo(...)`; `StoredAudio` / `NoStoredAudio`; `ConfiguredModels` / `AnyModel`
+    - `steps.py` — the port: `Steps` (the outside world as a bundle of operations), the `CachedAudio` protocol, the null objects `NoStoredAudio` / `AnyModel`, and `DownloadFailed` (what a `download` step raises). Imports no service and no store — what fills it lives in `app/adapters.py`
     - `errors.py` — `UseCaseError` and its subclasses (`RecordNotFound`, `RecordBusy`, `RecordNotCompleted`, `RecordFromOtherMode`, `ModelNotAvailable`, `SummaryNotFound`, `SummaryNotSaved`)
-  - `domain/` — pure rules, no clients, no I/O, no `settings`: `model_policy.py` (`Provider`, `ModelPolicy`), `limits.py` (`DurationLimits`). Defaults are passed in by the caller
-  - `storage/` — one class per file: `results_directory.py` (`ResultsDirectory`, `RecordId`), `markdown_file.py` (`MarkdownFile`), `record_store.py` (`RecordStore`), `summary_store.py` (`SummaryStore`), `audio_cache.py` (`AudioCache`), `chunk_cache.py` (`ChunkCache`), `history.py` (`History` — the four stores wired on one directory)
+  - `domain/` — pure rules, no clients, no I/O, no `settings`: `record.py` (`RecordId`, the `STATUS_*` values, `RecordLifecycle`), `model_policy.py` (`Provider`, `ModelPolicy`), `limits.py` (`DurationLimits`). Defaults are passed in by the caller
+  - `storage/` — one class per file: `results_directory.py` (`ResultsDirectory`), `markdown_file.py` (`MarkdownFile`), `record_store.py` (`RecordStore`), `summary_store.py` (`SummaryStore`), `audio_cache.py` (`AudioCache`), `chunk_cache.py` (`ChunkCache`), `history.py` (`History` — the four stores wired on one directory)
   - `services/` — `clients.py` (`ClientFactory`), `downloader.py` (`Downloader`), `chunker.py` (`AudioChunker`), `transcriber.py` (`Transcriber`), `summarizer.py` (`Summarizer`), `temp_files.py` (`TempDirectory`), `desktop.py` (`Desktop`), `demo.py` (`DemoServices`)
+- `adapters.py` fills the `Steps` port: `StepsFactory.real(...)` / `.demo(...)`, plus `YoutubeDownload` (turns the downloader's `DownloadError` into `DownloadFailed`), `StoredAudio` and `ConfiguredModels` (turns `ProviderNotConfigured` into `ModelNotAvailable`). A service error the use cases must react to is translated here — `usecases/` never imports a service's exception
 - `wiring.py` is the composition root: `Wiring(settings)` builds the stores, services and use cases — the real and the demo set are the same classes built with different `Steps`, sharing one `History` and one `ActiveRuns`
 - `main.py`: `Application(FastAPI)` — constructing it configures logging, builds a `Wiring` and registers routes; startup work (startup log, failing leftover records) runs in its lifespan. Nothing is built at import; `run.py` (`Launcher`) starts uvicorn with `"app.main:Application", factory=True`
 - History stored as markdown files with YAML frontmatter in `results/` — no database
@@ -58,24 +59,27 @@
 - Frontend is vanilla HTML/CSS/JS in `app/static/` — no build step
 
 ## Key Patterns
-- Record IDs: 8-char hex (`RecordId.new()`), validated via `RecordId.is_valid()` before any file op
+- Record IDs: 8-char hex (`RecordId.new()` in `domain/record.py`), validated via `RecordId.is_valid()` before any file op
 - `ResultsDirectory` is the only place that builds paths from record IDs; `record_file()` validates ID format + glob lookup + path traversal guard. It reads `settings.results_dir` on every call
 - `TranscriptionRun.events()` yields progress events, checks `is_cancelled` between steps (`_stop_if_cancelled()` raises the private `_Cancelled`), and `_finish()` (its `finally`) marks interrupted records as failed and removes the run's temp files; `EventStream` in `web/sse.py` serializes the events
+- A run's audio is one value, `AcquiredAudio` (path in `tmp/`, title, duration, `needs_caching`), set once by `TranscriptionRun._acquire_audio()`; `_cached_audio()` is a pure lookup. The length rule is applied in one place (`_work()`, right after acquisition) — the download step is additionally handed it as `accept` so a too-long video is refused before it is fetched
 - A run only fails or interrupts a record it has opened (`_record_id` is `None` until then; `_target_id` names the record for messages): a retranscribe whose download fails leaves the record exactly as it was
 - Use cases raise `UseCaseError` subclasses; `ErrorResponses.STATUS_FOR` in `web/errors.py` maps each to a status code and the client always gets `{"error": message}`. Routes only raise `ApiError` themselves for HTTP-level problems (`Routes._require_valid_id()` → 400). A new refusal = a new subclass + one `STATUS_FOR` entry (`tests/web/test_errors.py` fails if the entry is missing)
-- Things that are refused before work starts: unknown record (404), record in progress (409), record from the other mode (409), provider without an API key (400, `Steps.check_model`) — a missing key never surfaces at the first chunk
+- Things that are refused before work starts: unknown record (404), record in progress (409), deleting a record a run holds (409), record from the other mode (409), provider without an API key (400, `Steps.check_model`) — a missing key never surfaces at the first chunk
 - SSE progress events include `chunk`, `chunks_total`, and `eta_seconds` fields during transcription (ETA from rolling average of per-chunk times)
 - `RecordStore.complete()` / `fail()` / `reset()` all go through `_transition()` — the only place that rebuilds the YAML meta dict; add new frontmatter fields there
 - `_transition()` keeps the stored body unless a new one is given: a failed or interrupted retranscribe leaves the previous transcript in the file (status `error`), only `complete()` replaces it
 - `_transition()` refuses `in_progress` → `in_progress`, so `reset()` returns False for a record another run holds — that is the guard against two concurrent retranscribes; the 409 from `Transcription.retranscribe()` is only the early check
-- Status values are `STATUS_IN_PROGRESS` / `STATUS_DONE` / `STATUS_ERROR` from `storage/record_store.py` — don't re-inline the strings or the ID regex
+- Status values are `STATUS_IN_PROGRESS` / `STATUS_DONE` / `STATUS_ERROR` from `domain/record.py` — don't re-inline the strings or the ID regex
+- What may happen to a record in which status is `RecordLifecycle` (`domain/record.py`): `may_enter()` (used by `RecordStore._transition()`), `is_in_progress()`, `can_be_summarized()`, `belongs_to_mode()`. Ask it instead of comparing `record["status"]` in a use case or a store
 - `RecordStore.fail_in_progress(reason, except_ids)` backs both startup cleanup and `POST /api/cleanup`. Liveness is known, not guessed from file ages: `ActiveRuns` registers every run from before its download until its `_finish()`, and cleanup spares exactly the records those runs hold. This relies on the server being a single process
 - `Maintenance.clean_up()` skips `TempDirectory.purge()` while any run is active (its download and chunks live in `tmp/`), and otherwise deletes everything in it
 - `MarkdownFile.write()` uses `sort_keys=False` to preserve frontmatter key order
 - Audio cached in `results/{record_id}.mp3` after download (`AudioCache`) — reused by retranscribe and same-URL re-transcriptions, deleted with record
-- `RecordStore.find_cached_audio_for_url()` scans existing records to skip re-download when the same URL is transcribed again; the use case reaches it through `Steps.audio_cache` (`StoredAudio`)
+- `RecordStore.find_cached_audio_for_url()` scans existing records to skip re-download when the same URL is transcribed again; the use case reaches it through `Steps.audio_cache` (`StoredAudio` in `app/adapters.py`)
 - Summary sidecar: `results/{record_id}_summary.md` with YAML frontmatter (prompt, model, created_at) + body (`SummaryStore`)
-- `RecordStore.delete()` cascades to delete summary sidecar, audio cache, and chunk cache
+- `RecordStore.delete()` cascades to delete summary sidecar, audio cache, and chunk cache. `Records.remove()` refuses (`RecordBusy`, 409) while a run in `ActiveRuns` holds the record; a record merely left `in_progress` with no run behind it can be deleted
+- `TranscriptionRun._save()` raises when `RecordStore.complete()` returns False, so a transcript that is not in the history is reported as an `error` event, never as `transcript` + `done`
 - Video title prepended as first line of transcript (`TranscriptionRun._save()`) and as a heading of the summary body (`Summarization._with_heading()`)
 - Chunk cache sidecar: `results/{record_id}_chunks.json` (`ChunkCache`) — stores completed chunk transcriptions for resume after interruption; saved after each chunk completes, deleted on successful completion
 - `ChunkCache._key()` hashes `model|total|duration_limit` (SHA256, 16-char prefix) — cache invalidated when any parameter changes
@@ -90,7 +94,7 @@
 - `ClientFactory` (`app/services/clients.py`) — used by both `Transcriber` and `Summarizer`: `client_for(model)` builds the client, `require_provider(model)` raises `ProviderNotConfigured` when the key is missing
 - Gemini transcription uses `gemini-3.5-transcribe`, Google's dedicated speech-to-text model, through the same chat + `input_audio` call. It is not a reasoning model: it rejects `reasoning_effort` with a 400, and it is not served on the OpenAI-compatible `/audio/transcriptions` route (404). Avoid general Flash models here — with default thinking `gemini-3-flash-preview` took 18s to over 50s on a 2-minute clip that the transcribe model does in ~4s
 - Chat-based transcription (`Transcriber._via_chat()`, used by Gemini) retries on empty content: `MAX_EMPTY_RESPONSE_RETRIES = 3` with exponential backoff — raises `RuntimeError` after all retries exhausted. The audio format sent is the chunk file's extension
-- `duration_limit` API field is in minutes (`DurationLimitMinutes` in `web/schemas.py`, `0 <= v <= 480`, 0 = no limit); `TranscriptionOptions.duration_limit_seconds` is the one place it becomes seconds
+- `duration_limit` API field is in minutes (`DurationLimitMinutes` in `web/schemas.py`, `0 <= v <= MAX_DURATION_LIMIT_MINUTES` = 240, 0 = no limit — derived from `MAX_DURATION_SECONDS`, so a limit that passes validation is never refused for length); `TranscriptionOptions.duration_limit_seconds` is the one place it becomes seconds
 - Length rules live in `DurationLimits` (`domain/limits.py`): a request may transcribe at most `MAX_DURATION_SECONDS` (4 h) of audio, and a duration limit counts — the first 10 minutes of a 5-hour video are accepted. Retranscribes are exempt. The check runs before the download: `Downloader.download(url, accept)` fetches metadata first and calls `accept(duration)`, which raises to refuse (`_fetch` uses yt-dlp's `extract_info(download=False)` then `process_ie_result(info, download=True)`)
 
 ## Code Style
@@ -115,12 +119,12 @@
 - `logs/` is gitignored
 
 ## Testing Conventions
-- `tests/` mirrors `app/`: tests for `app/<pkg>/<module>.py` live in `tests/<pkg>/test_<module>.py` (`tests/test_main.py` for `app/main.py`, `tests/test_wiring.py` for `app/wiring.py`). Only `tests/test_integration.py` spans layers. Put a new test next to the module it exercises, not next to the endpoint that happens to reach it
+- `tests/` mirrors `app/`: tests for `app/<pkg>/<module>.py` live in `tests/<pkg>/test_<module>.py` (`tests/test_main.py` for `app/main.py`, `tests/test_wiring.py` for `app/wiring.py`, `tests/test_adapters.py` for `app/adapters.py`). Only `tests/test_integration.py` spans layers. Put a new test next to the module it exercises, not next to the endpoint that happens to reach it
 - Tests are methods of `Test*` classes; shared helpers are methods of a base class the test classes extend (`TranscriberTest`, `MaintenanceTest`, `DemoTest`). The only module-level functions in `tests/` are pytest fixtures
 - Fixtures in `tests/conftest.py`: `tmp_results` (points `settings.results_dir` at a temp dir), `history` (a `History` on it), `client` (TestClient on it). The use-case `env` fixture (`Env`: fake `Steps`, the use cases built on them, `run()`) lives in `tests/usecases/conftest.py`
 - Build the class under test with its collaborators (`Summarizer(clients, ModelPolicy())`, `Maintenance(history, TempDirectory(settings), ActiveRuns())`) and pass fakes for the ones that reach outside — don't patch modules
 - Patch settings on the singleton (`from app.config import settings`; `monkeypatch.setattr(settings, ...)`); every class reads it at call time
-- `Steps.for_real()` binds the services' methods when the app is wired, so replacing a service method must happen before the app is built — request such a fixture before `client` (see `summarizer` in `tests/web/test_routes.py`)
+- `StepsFactory.real()` binds the services' methods when the app is wired, so replacing a service method must happen before the app is built — request such a fixture before `client` (see `summarizer` in `tests/web/test_routes.py`)
 - `TestClient(Application())` does not run the lifespan; use it as a context manager when a test needs startup behaviour
 - Mock external deps (yt-dlp, ffmpeg, OpenAI) in unit tests
 - Test the transcription flow through `env.run()` / `env.run(record_id=...)` in `tests/usecases/test_transcription.py`, not through the HTTP endpoints
@@ -169,7 +173,7 @@
 - `TranscriptionOptions.duration_limit_seconds` converts minutes → seconds before storage and passing to `AudioChunker.prepare_chunks()`
 - `AudioChunker.prepare_chunks()` truncates audio via ffmpeg before chunking when `duration_limit` is set
 - Stored in YAML frontmatter as `duration_limit` (seconds); card displays "first Nm" badge and "Nm of Xh Ym" duration format
-- Validation: `0 <= duration_limit <= 480` minutes (0 = no limit, max = 8 hours)
+- Validation: `0 <= duration_limit <= 240` minutes (0 = no limit, max = 4 hours — the most one transcription processes)
 
 ## Gotchas
 - `MarkdownFile.read()` returns every YAML value as a string; `RecordStore._parse()` turns `duration`, `duration_limit`, and `words` into ints and `demo` into a bool

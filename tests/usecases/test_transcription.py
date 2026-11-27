@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.services.downloader import DownloadError
 from app.usecases.errors import ModelNotAvailable, RecordBusy, RecordFromOtherMode, RecordNotFound
+from app.usecases.steps import DownloadFailed
 from tests.usecases.conftest import URL
 
 
@@ -71,7 +71,7 @@ class TestNewTranscription:
 
     @pytest.mark.asyncio
     async def test_download_error_is_reported_without_a_record(self, env):
-        env.download.side_effect = DownloadError("Video unavailable")
+        env.download.side_effect = DownloadFailed("Video unavailable")
         events = await env.run()
         assert events[-1] == ("error", {"message": "Video unavailable", "record_id": None})
         assert env.history.records.list_all() == []
@@ -256,7 +256,7 @@ class TestRetranscription:
         """Nothing was changed yet, so a finished record stays finished."""
         rid = env.history.records.create("Old Title", URL, 90, model="m1")
         env.history.records.complete(rid, "Old Title\n\nold text")  # no cached audio → must download
-        env.download.side_effect = DownloadError("Video unavailable")
+        env.download.side_effect = DownloadFailed("Video unavailable")
         events = await env.run(record_id=rid)
         assert events[-1] == ("error", {"message": "Video unavailable", "record_id": rid})
         untouched = env.history.records.get(rid)
@@ -282,3 +282,20 @@ class TestRetranscription:
         still_running = env.history.records.get(rid)
         assert still_running["status"] == "in_progress"
         assert still_running["model"] == "other-run"
+
+
+class TestSaving:
+    @pytest.mark.asyncio
+    async def test_a_transcript_that_cannot_be_saved_is_an_error_not_a_result(self, env):
+        """The record vanished under the run (its file was removed): never report a transcript that is not kept."""
+
+        def record_vanishes(path, model):
+            for record in env.history.records.list_all():
+                env.history.records.delete(record["id"])
+            return "text"
+
+        env.transcribe.side_effect = record_vanishes
+        events = await env.run()
+        assert [name for name, _ in events if name in ("transcript", "done")] == []
+        assert events[-1][0] == "error"
+        assert "could not be saved" in events[-1][1]["message"]

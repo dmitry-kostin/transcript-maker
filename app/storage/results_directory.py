@@ -1,31 +1,9 @@
 """Where records and their sidecar files live, and how a record ID maps to them."""
 
-import re
-import uuid
 from pathlib import Path
 
 from app.config import Settings
-
-
-class RecordId:
-    """Record IDs are 8 lowercase hex chars. Check ``is_valid`` before any file operation."""
-
-    _FORMAT = re.compile(r"[0-9a-f]{8}")
-    _IN_FILENAME = re.compile(r"_([0-9a-f]{8})\.md$")
-
-    @classmethod
-    def is_valid(cls, value: str) -> bool:
-        return bool(cls._FORMAT.fullmatch(value))
-
-    @classmethod
-    def new(cls) -> str:
-        return uuid.uuid4().hex[:8]
-
-    @classmethod
-    def from_filename(cls, name: str) -> str | None:
-        """The ID in a record filename (``*_{8hex}.md``); None for any other file."""
-        match = cls._IN_FILENAME.search(name)
-        return match.group(1) if match else None
+from app.domain.record import RecordId
 
 
 class ResultsDirectory:

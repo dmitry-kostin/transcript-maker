@@ -4,8 +4,8 @@ import logging
 
 from app.config import Settings
 from app.domain.model_policy import ModelPolicy
+from app.domain.record import RecordLifecycle
 from app.storage.history import History
-from app.storage.record_store import STATUS_DONE
 from app.usecases.errors import RecordNotCompleted, SummaryNotSaved
 from app.usecases.records import Records
 from app.usecases.steps import Steps
@@ -35,7 +35,7 @@ class Summarization:
         Returns ``{"summary", "prompt", "model"}`` as stored.
         """
         record = self._records.load_to_change(record_id, demo=self._steps.demo)
-        if record["status"] != STATUS_DONE:
+        if not RecordLifecycle.can_be_summarized(record):
             raise RecordNotCompleted
         model = self._policy.resolve_summarize_model(requested_model, self._settings.summarize_model)
         self._steps.check_model(model)

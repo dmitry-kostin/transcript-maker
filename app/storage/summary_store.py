@@ -3,8 +3,9 @@
 import logging
 from datetime import UTC, datetime
 
+from app.domain.record import RecordId
 from app.storage.markdown_file import MarkdownFile
-from app.storage.results_directory import RecordId, ResultsDirectory
+from app.storage.results_directory import ResultsDirectory
 
 logger = logging.getLogger(__name__)
 

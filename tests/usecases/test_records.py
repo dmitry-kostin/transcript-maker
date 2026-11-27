@@ -2,7 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.usecases.errors import RecordFromOtherMode, RecordNotFound, SummaryNotFound
+from app.usecases.active_runs import ActiveRuns
+from app.usecases.errors import RecordBusy, RecordFromOtherMode, RecordNotFound, SummaryNotFound
 from app.usecases.records import Records
 
 URL = "https://www.youtube.com/watch?v=abc123xyz"
@@ -13,7 +14,8 @@ class RecordsTest:
     def _wired(self, history):
         self.history = history
         self.desktop = MagicMock()
-        self.records = Records(history, self.desktop)
+        self.active_runs = ActiveRuns()
+        self.records = Records(history, self.desktop, self.active_runs)
 
 
 class TestRecords(RecordsTest):
@@ -34,6 +36,22 @@ class TestRecords(RecordsTest):
         self.records.remove(rid)
         assert self.records.list_all() == []
         assert list(tmp_results.iterdir()) == []
+
+    def test_remove_is_refused_while_a_run_transcribes_the_record(self):
+        rid = self.history.records.create("Vid", URL, 60)
+        run = self.active_runs.start()
+        run.record_id = rid
+        with pytest.raises(RecordBusy):
+            self.records.remove(rid)
+        assert self.records.load(rid)["id"] == rid
+        self.active_runs.finish(run)
+        self.records.remove(rid)
+        assert self.records.list_all() == []
+
+    def test_a_record_left_in_progress_with_no_run_can_be_removed(self):
+        rid = self.history.records.create("Vid", URL, 60)
+        self.records.remove(rid)
+        assert self.records.list_all() == []
 
     def test_summary(self):
         rid = self.history.records.create("Vid", URL, 60)

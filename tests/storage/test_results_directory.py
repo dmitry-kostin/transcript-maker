@@ -1,32 +1,5 @@
-import pytest
-
 from app.config import settings
-from app.storage.results_directory import RecordId, ResultsDirectory
-
-
-class TestRecordId:
-    @pytest.mark.parametrize(
-        "value,ok",
-        [
-            ("0a1b2c3d", True),
-            ("0A1B2C3D", False),
-            ("0a1b2c3", False),
-            ("0a1b2c3d4", False),
-            ("../../ab", False),
-            ("", False),
-        ],
-    )
-    def test_is_valid(self, value, ok):
-        assert RecordId.is_valid(value) is ok
-
-    def test_new_ids_are_valid(self):
-        assert RecordId.is_valid(RecordId.new())
-
-    def test_from_filename(self):
-        assert RecordId.from_filename("my-video_abcd1234.md") == "abcd1234"
-        assert RecordId.from_filename("no-id-here.md") is None
-        assert RecordId.from_filename("abcd1234_summary.md") is None
-        assert RecordId.from_filename("abcd1234_chunks.json") is None
+from app.storage.results_directory import ResultsDirectory
 
 
 class TestResultsDirectory:

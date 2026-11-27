@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.adapters import StepsFactory, StoredAudio
 from app.config import settings
 from app.domain.limits import DurationLimits
 from app.domain.model_policy import ModelPolicy
@@ -13,7 +14,7 @@ from app.services.temp_files import TempDirectory
 from app.storage.history import History
 from app.usecases.active_runs import ActiveRuns
 from app.usecases.records import Records
-from app.usecases.steps import Steps, StoredAudio
+from app.usecases.steps import Steps
 from app.usecases.summarization import Summarization
 from app.usecases.transcription import RunTools, Transcription
 
@@ -28,7 +29,7 @@ class Env:
         self.audio = audio
         self.active_runs = ActiveRuns()
         self.desktop = MagicMock()
-        self.records = Records(history, self.desktop)
+        self.records = Records(history, self.desktop, self.active_runs)
         self.chunks: list[Path] | None = None  # None → the audio the use case prepared, unsplit
         self.chunk_limit_seen: int | None = None
         self.download = AsyncMock(return_value=(audio, 120, "My Video"))
@@ -52,7 +53,7 @@ class Env:
         )
 
     def demo_steps(self) -> Steps:
-        return Steps.for_demo(DemoServices(settings))
+        return StepsFactory().demo(DemoServices(settings))
 
     def transcription(self, steps: Steps | None = None) -> Transcription:
         tools = RunTools(

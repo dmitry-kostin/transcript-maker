@@ -222,7 +222,7 @@ transcript-maker/
 
 - `url` — YouTube video URL (required)
 - `model` — Transcription model (optional, default `gpt-transcribe`). Supports OpenAI models (`gpt-transcribe`) and Gemini models (`gemini-*`).
-- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`). Converted to seconds internally.
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `240`). Converted to seconds internally.
 
 Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs or playlist URLs.
 
@@ -248,7 +248,7 @@ Re-transcribes an existing record using its stored URL. Returns an SSE stream id
 ```
 
 - `model` — Transcription model (optional, same as `/api/transcribe`)
-- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`)
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `240`)
 
 Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
 

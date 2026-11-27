@@ -1,6 +1,6 @@
 """Simulated services for demo mode.
 
-Nothing here talks to YouTube or a model API. ``Steps.demo()`` hands these to the
+Nothing here talks to YouTube or a model API. ``StepsFactory.demo()`` hands these to the
 real use cases, so records, progress events, cancellation and failure handling
 behave exactly as they do for real.
 """

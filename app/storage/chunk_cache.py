@@ -4,7 +4,8 @@ import hashlib
 import json
 import logging
 
-from app.storage.results_directory import RecordId, ResultsDirectory
+from app.domain.record import RecordId
+from app.storage.results_directory import ResultsDirectory
 
 logger = logging.getLogger(__name__)
 

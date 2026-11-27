@@ -5,8 +5,9 @@ from dataclasses import dataclass
 # Longest stretch of audio one transcription will process
 MAX_DURATION_SECONDS = 4 * 60 * 60
 
-# Largest "first N minutes" value a client may send — matches the frontend input's max attribute
-MAX_DURATION_LIMIT_MINUTES = 480
+# Largest "first N minutes" value a client may send: asking for more than one transcription may
+# process could only ever be refused. Matches the frontend input's max attribute
+MAX_DURATION_LIMIT_MINUTES = MAX_DURATION_SECONDS // 60
 
 
 @dataclass(frozen=True)
