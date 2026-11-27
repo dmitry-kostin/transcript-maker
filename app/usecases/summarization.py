@@ -1,42 +1,45 @@
 """The summarization use case: completed transcript → summary sidecar."""
 import logging
-from collections.abc import Awaitable, Callable
 
-from app.services.summarizer import summarize_text
-from app.storage.history import STATUS_DONE, save_summary
+from app.config import Settings
+from app.domain.model_policy import ModelPolicy
+from app.storage.history import History
+from app.storage.record_store import STATUS_DONE
+from app.usecases.errors import RecordNotCompleted, SummaryNotSaved
+from app.usecases.records import Records
+from app.usecases.steps import Steps
 
 logger = logging.getLogger(__name__)
 
 
-class RecordNotCompleted(Exception):
-    """Only a finished transcript can be summarized."""
+class Summarization:
+    def __init__(
+        self, steps: Steps, history: History, records: Records, settings: Settings, policy: ModelPolicy,
+    ) -> None:
+        self._steps = steps
+        self._history = history
+        self._records = records
+        self._settings = settings
+        self._policy = policy
 
+    async def summarize_record(self, record_id: str, prompt: str, requested_model: str = "") -> dict:
+        """Summarize a record's transcript and save it beside the record.
 
-class SummaryNotSaved(Exception):
-    """The summary was generated but could not be written."""
+        The model is resolved once here — the same value is run and stored.
+        Returns ``{"summary", "prompt", "model"}`` as stored.
+        """
+        record = self._records.load_to_change(record_id, demo=self._steps.demo)
+        if record["status"] != STATUS_DONE:
+            raise RecordNotCompleted
+        model = self._policy.resolve_summarize_model(requested_model, self._settings.summarize_model)
+        self._steps.check_model(model)
 
+        prompt = prompt.strip()
+        summary = self._with_heading(record["title"], await self._steps.summarize(record["body"], prompt, model))
+        if not self._history.summaries.save(record_id, summary, prompt, model):
+            raise SummaryNotSaved
+        return {"summary": summary, "prompt": prompt, "model": model}
 
-def with_heading(title: str, summary: str) -> str:
-    """A stored summary always starts with the video title as a heading."""
-    return f"# {title}\n\n{summary}"
-
-
-async def summarize_record(
-    record: dict,
-    prompt: str,
-    model: str = "",
-    summarize: Callable[..., Awaitable[str]] | None = None,
-) -> dict:
-    """Summarize ``record``'s transcript and save it beside the record.
-
-    ``summarize`` replaces the real summarizer (demo mode passes a canned one).
-    Returns ``{"summary", "prompt"}`` as stored.
-    """
-    if record["status"] != STATUS_DONE:
-        raise RecordNotCompleted(record["id"])
-    summarize = summarize or summarize_text
-    summary = with_heading(record["title"], await summarize(record["body"], prompt, model=model))
-    prompt = prompt.strip()
-    if not save_summary(record["id"], summary, prompt):
-        raise SummaryNotSaved(record["id"])
-    return {"summary": summary, "prompt": prompt}
+    def _with_heading(self, title: str, summary: str) -> str:
+        """A stored summary always starts with the video title as a heading."""
+        return f"# {title}\n\n{summary}"

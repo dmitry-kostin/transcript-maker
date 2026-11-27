@@ -785,16 +785,10 @@ async function runSSE(fetchUrl, fetchBody) {
     });
 
     if (!response.ok) {
-      if (response.status === 422) {
-        try {
-          const body = await response.json();
-          const msg = body?.detail?.[0]?.msg || "Invalid request";
-          throw new Error(msg.replace(/^Value error,\s*/i, ""));
-        } catch (e) {
-          if (e instanceof Error && e.message !== "Invalid request") throw e;
-        }
-      }
-      throw new Error(`Server error: ${response.status}`);
+      // 422 carries pydantic's detail list; every other refusal is {"error": message}
+      const body = await response.json().catch(() => null);
+      const msg = response.status === 422 ? body?.detail?.[0]?.msg : body?.error;
+      throw new Error(msg ? msg.replace(/^Value error,\s*/i, "") : `Server error: ${response.status}`);
     }
 
     const reader = response.body.getReader();

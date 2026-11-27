@@ -2,9 +2,7 @@
 import pytest
 
 from app.services.downloader import DownloadError
-from app.storage.history import (
-    complete_record, create_record, get_history, get_record, reset_record, save_audio, save_chunk_cache,
-)
+from app.usecases.errors import ModelNotAvailable, RecordBusy, RecordFromOtherMode, RecordNotFound
 from tests.usecases.conftest import URL
 
 
@@ -18,7 +16,7 @@ class TestNewTranscription:
         assert payload["text"] == "My Video\n\ntext of video_11111111.mp3"
         assert payload["model"] == "gpt-transcribe"
 
-        record = get_record(payload["record_id"])
+        record = env.history.records.get(payload["record_id"])
         assert record["status"] == "done"
         assert record["body"] == payload["text"]
         assert record["model"] == "gpt-transcribe"
@@ -27,7 +25,7 @@ class TestNewTranscription:
     async def test_duration_limit_is_stored_and_passed_to_chunker(self, env):
         events = await env.run(duration_limit=300)
         assert env.chunk_limit_seen == 300
-        assert get_record(events[-2][1]["record_id"])["duration_limit"] == 300
+        assert env.history.records.get(events[-2][1]["record_id"])["duration_limit"] == 300
 
     @pytest.mark.asyncio
     async def test_too_long_video_is_rejected_before_a_record_exists(self, env):
@@ -35,7 +33,34 @@ class TestNewTranscription:
         events = await env.run()
         assert events[-1][0] == "error"
         assert "Max is 4 hours" in events[-1][1]["message"]
-        assert get_history() == []
+        assert env.history.records.list_all() == []
+
+    @pytest.mark.asyncio
+    async def test_too_long_video_is_refused_before_it_is_downloaded(self, env):
+        """The download step reports the length first; the use case says no and nothing is fetched."""
+        fetched = False
+
+        async def download(url, accept):
+            nonlocal fetched
+            accept(5 * 60 * 60)
+            fetched = True
+            return env.audio, 5 * 60 * 60, "Long"
+
+        env.download.side_effect = download
+        events = await env.run()
+        assert events[-1][0] == "error"
+        assert "Max is 4 hours" in events[-1][1]["message"]
+        assert not fetched
+        assert env.history.records.list_all() == []
+
+    @pytest.mark.asyncio
+    async def test_unavailable_model_is_refused_before_anything_starts(self, env):
+        env.check_model.side_effect = ModelNotAvailable("TM_OPENAI_API_KEY env var is required")
+        with pytest.raises(ModelNotAvailable):
+            await env.run()
+        env.check_model.assert_called_once_with("gpt-transcribe")
+        env.download.assert_not_awaited()
+        assert env.history.records.list_all() == []
 
     @pytest.mark.asyncio
     async def test_first_minutes_of_a_too_long_video_are_accepted(self, env):
@@ -48,7 +73,7 @@ class TestNewTranscription:
         env.download.side_effect = DownloadError("Video unavailable")
         events = await env.run()
         assert events[-1] == ("error", {"message": "Video unavailable", "record_id": None})
-        assert get_history() == []
+        assert env.history.records.list_all() == []
 
     @pytest.mark.asyncio
     async def test_empty_chunk_fails_the_record(self, env):
@@ -57,7 +82,7 @@ class TestNewTranscription:
         events = await env.run()
         name, payload = events[-1]
         assert name == "error"
-        record = get_record(payload["record_id"])
+        record = env.history.records.get(payload["record_id"])
         assert record["status"] == "error"
         assert "empty transcription" in record["error"]
 
@@ -67,7 +92,7 @@ class TestNewTranscription:
             return True
         events = await env.run(is_cancelled=cancelled)
         assert [name for name, _ in events] == ["progress", "progress"]
-        assert get_history() == []
+        assert env.history.records.list_all() == []
         env.transcribe.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -88,7 +113,7 @@ class TestNewTranscription:
         events = await env.run(is_cancelled=is_cancelled)
         assert "transcript" not in [name for name, _ in events]
         assert env.transcribe.await_count == 1
-        record = get_history()[0]
+        record = env.history.records.list_all()[0]
         assert record["status"] == "error"
         assert record["error"] == "Transcription interrupted"
 
@@ -109,75 +134,130 @@ class TestNewTranscription:
         env.download.assert_not_awaited()
         assert events[0][1]["message"] == "Using cached audio..."
         assert events[-2][1]["title"] == "My Video"
-        assert len(get_history()) == 2
+        assert len(env.history.records.list_all()) == 2
 
     @pytest.mark.asyncio
     async def test_temp_audio_is_cleaned_up(self, env):
         await env.run()
         assert not env.audio.exists()
 
+    @pytest.mark.asyncio
+    async def test_run_is_registered_as_active_only_while_it_runs(self, env):
+        """Cleanup asks this registry what is alive."""
+        seen: list[tuple[bool, set[str]]] = []
+
+        async def download(url, accept):
+            seen.append((env.active_runs.any_active(), env.active_runs.record_ids()))
+            return env.audio, 120, "My Video"
+
+        async def transcribe(path, model):
+            seen.append((env.active_runs.any_active(), env.active_runs.record_ids()))
+            return "text"
+
+        env.download.side_effect = download
+        env.transcribe.side_effect = transcribe
+        events = await env.run()
+        record_id = events[-2][1]["record_id"]
+        assert seen == [(True, set()), (True, {record_id})]
+        assert not env.active_runs.any_active()
+
+    @pytest.mark.asyncio
+    async def test_failed_run_is_no_longer_active(self, env):
+        env.transcribe.side_effect = RuntimeError("boom")
+        await env.run()
+        assert not env.active_runs.any_active()
+
 
 class TestRetranscription:
     def _existing(self, env) -> dict:
-        rid = create_record("Old Title", URL, 90, model="gpt-4o-transcribe-diarize")
-        complete_record(rid, "Old Title\n\nold text")
-        save_audio(rid, env.audio)
-        return get_record(rid)
+        rid = env.history.records.create("Old Title", URL, 90, model="gpt-4o-transcribe-diarize")
+        env.history.records.complete(rid, "Old Title\n\nold text")
+        env.history.audio.save(rid, env.audio)
+        return env.history.records.get(rid)
+
+    @pytest.mark.asyncio
+    async def test_missing_record_is_refused(self, env):
+        with pytest.raises(RecordNotFound):
+            await env.run(record_id="00000000")
+
+    @pytest.mark.asyncio
+    async def test_record_in_progress_is_refused(self, env):
+        rid = env.history.records.create("Running", URL, 90)
+        with pytest.raises(RecordBusy):
+            await env.run(record_id=rid)
+        env.download.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_demo_record_is_refused_by_real_steps(self, env):
+        rid = env.history.records.create("Demo: x", "x", 90, demo=True)
+        env.history.records.complete(rid, "Demo: x\n\nplaceholder")
+        with pytest.raises(RecordFromOtherMode):
+            await env.run(record_id=rid)
+        assert env.history.records.get(rid)["status"] == "done"
 
     @pytest.mark.asyncio
     async def test_rewrites_the_same_record_from_cached_audio(self, env):
         record = self._existing(env)
-        events = await env.run(record=record, duration_limit=60)
+        events = await env.run(record_id=record["id"], duration_limit=60)
         env.download.assert_not_awaited()
         payload = events[-2][1]
         assert payload["record_id"] == record["id"]
         assert payload["title"] == "Old Title"
         assert payload["duration_seconds"] == 90
 
-        updated = get_record(record["id"])
+        updated = env.history.records.get(record["id"])
         assert updated["status"] == "done"
         assert updated["model"] == "gpt-transcribe"
         assert updated["duration_limit"] == 60
         assert updated["body"].startswith("Old Title\n\ntext of retranscribe_")
-        assert len(get_history()) == 1
+        assert len(env.history.records.list_all()) == 1
 
     @pytest.mark.asyncio
     async def test_long_recording_is_not_blocked_on_retranscribe(self, env):
-        rid = create_record("Long", URL, 5 * 60 * 60)
-        complete_record(rid, "Long\n\nold text")
-        save_audio(rid, env.audio)
-        events = await env.run(record=get_record(rid))
+        rid = env.history.records.create("Long", URL, 5 * 60 * 60)
+        env.history.records.complete(rid, "Long\n\nold text")
+        env.history.audio.save(rid, env.audio)
+        events = await env.run(record_id=rid)
         assert events[-1][0] == "done"
 
     @pytest.mark.asyncio
     async def test_resumes_from_chunk_cache(self, env):
         record = self._existing(env)
         env.chunks = [env.audio, env.add_chunk("x_chunk1.mp3")]
-        save_chunk_cache(record["id"], "gpt-transcribe", 2, ["first part"])
+        env.history.chunks.save(record["id"], "gpt-transcribe", 2, ["first part"])
 
-        events = await env.run(record=record)
+        events = await env.run(record_id=record["id"])
         assert env.transcribe.await_count == 1
         assert events[-2][1]["text"] == "Old Title\n\nfirst part text of x_chunk1.mp3"
+
+    @pytest.mark.asyncio
+    async def test_chunk_cache_from_another_duration_limit_is_not_reused(self, env):
+        record = self._existing(env)
+        env.chunks = [env.audio, env.add_chunk("x_chunk1.mp3")]
+        env.history.chunks.save(record["id"], "gpt-transcribe", 2, ["first part", "second part"])  # made with no limit
+
+        await env.run(record_id=record["id"], duration_limit=900)
+        assert env.transcribe.await_count == 2
 
     @pytest.mark.asyncio
     async def test_failure_marks_record_failed_but_keeps_the_old_transcript(self, env):
         record = self._existing(env)
         env.transcribe.side_effect = RuntimeError("boom")
-        events = await env.run(record=record)
+        events = await env.run(record_id=record["id"])
         assert events[-1] == ("error", {"message": "An error occurred: boom", "record_id": record["id"]})
-        failed = get_record(record["id"])
+        failed = env.history.records.get(record["id"])
         assert failed["status"] == "error"
         assert failed["body"] == "Old Title\n\nold text"
 
     @pytest.mark.asyncio
     async def test_download_failure_leaves_the_record_untouched(self, env):
         """Nothing was changed yet, so a finished record stays finished."""
-        rid = create_record("Old Title", URL, 90, model="m1")
-        complete_record(rid, "Old Title\n\nold text")  # no cached audio → must download
+        rid = env.history.records.create("Old Title", URL, 90, model="m1")
+        env.history.records.complete(rid, "Old Title\n\nold text")  # no cached audio → must download
         env.download.side_effect = DownloadError("Video unavailable")
-        events = await env.run(record=get_record(rid))
+        events = await env.run(record_id=rid)
         assert events[-1] == ("error", {"message": "Video unavailable", "record_id": rid})
-        untouched = get_record(rid)
+        untouched = env.history.records.get(rid)
         assert untouched["status"] == "done"
         assert untouched["model"] == "m1"
         assert untouched["body"] == "Old Title\n\nold text"
@@ -185,13 +265,18 @@ class TestRetranscription:
     @pytest.mark.asyncio
     async def test_record_taken_by_another_run_is_not_touched(self, env):
         """A second re-transcription that loses the race reports it and leaves the first one alone."""
-        record = self._existing(env)
-        reset_record(record["id"], model="other-run")  # the first run got there between lookup and open
+        rid = env.history.records.create("Old Title", URL, 90, model="m1")
+        env.history.records.complete(rid, "Old Title\n\nold text")  # no cached audio → must download
 
-        events = await env.run(record=record)
+        async def download_while_the_other_run_takes_it(url, accept):
+            env.history.records.reset(rid, model="other-run")
+            return env.audio, 90, "Old Title"
+
+        env.download.side_effect = download_while_the_other_run_takes_it
+        events = await env.run(record_id=rid)
         assert events[-1][0] == "error"
         assert "another request" in events[-1][1]["message"]
         env.transcribe.assert_not_awaited()
-        still_running = get_record(record["id"])
+        still_running = env.history.records.get(rid)
         assert still_running["status"] == "in_progress"
         assert still_running["model"] == "other-run"

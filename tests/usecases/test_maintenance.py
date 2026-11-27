@@ -1,61 +1,74 @@
-import os
-import time
+from pathlib import Path
 
 import pytest
 
 from app.config import settings
-from app.storage.history import complete_record, create_record, get_record, get_result_path
-from app.usecases.maintenance import clean_up, fail_records_left_by_previous_run
+from app.services.temp_files import TempDirectory
+from app.usecases.active_runs import ActiveRuns
+from app.usecases.maintenance import Maintenance
+
+URL = "https://youtube.com/watch?v=a"
 
 
-@pytest.fixture
-def tmp_dir(tmp_results, tmp_path, monkeypatch):
-    path = tmp_path / "tmp"
-    path.mkdir()
-    monkeypatch.setattr(settings, "temp_dir", str(path))
-    return path
+class MaintenanceTest:
+    @pytest.fixture(autouse=True)
+    def _wired(self, history, tmp_path, monkeypatch):
+        self.tmp_dir: Path = tmp_path / "tmp"
+        self.tmp_dir.mkdir()
+        monkeypatch.setattr(settings, "temp_dir", str(self.tmp_dir))
+        self.history = history
+        self.active_runs = ActiveRuns()
+        self.maintenance = Maintenance(history, TempDirectory(settings), self.active_runs)
+
+    def _temp_file(self, name: str) -> Path:
+        file = self.tmp_dir / name
+        file.write_bytes(b"\x00")
+        return file
+
+    def _status(self, record_id: str) -> str:
+        return self.history.records.get(record_id)["status"]
 
 
-def _age(path, seconds: float) -> None:
-    then = time.time() - seconds
-    os.utime(path, (then, then))
+class TestCleanUp(MaintenanceTest):
+    def test_deletes_leftover_temp_files_and_fails_records_nothing_is_working_on(self):
+        leftover = self._temp_file("abc_11111111.mp3")
+        abandoned = self.history.records.create("Abandoned", URL, 60)
 
-
-class TestCleanUp:
-    def test_deletes_leftover_temp_files_and_fails_stale_records(self, tmp_dir):
-        leftover = tmp_dir / "abc_11111111.mp3"
-        leftover.write_bytes(b"\x00")
-        _age(leftover, 3600)
-        stale = create_record("Stale", "https://youtube.com/watch?v=a", 60)
-        _age(get_result_path(stale), 3600)
-
-        assert clean_up() == {"deleted_files": 1, "cleaned_records": 1}
+        assert self.maintenance.clean_up() == {"deleted_files": 1, "cleaned_records": 1}
         assert not leftover.exists()
-        assert get_record(stale)["status"] == "error"
+        assert self._status(abandoned) == "error"
 
-    def test_leaves_temp_files_alone_while_a_transcription_runs(self, tmp_dir):
-        """A running job's chunks sit in tmp/ long before they are transcribed."""
-        chunk = tmp_dir / "abc_11111111_chunk5.mp3"
-        chunk.write_bytes(b"\x00")
-        _age(chunk, 3600)
-        running = create_record("Running", "https://youtube.com/watch?v=a", 3600)
+    def test_leaves_a_running_transcription_and_its_temp_files_alone(self):
+        """However long a chunk takes: liveness is known, not guessed from file ages."""
+        chunk = self._temp_file("abc_11111111_chunk5.mp3")
+        running = self.history.records.create("Running", URL, 3600)
+        self.active_runs.start().record_id = running
 
-        assert clean_up() == {"deleted_files": 0, "cleaned_records": 0}
+        assert self.maintenance.clean_up() == {"deleted_files": 0, "cleaned_records": 0}
         assert chunk.exists()
-        assert get_record(running)["status"] == "in_progress"
+        assert self._status(running) == "in_progress"
 
-    def test_spares_a_file_that_is_still_being_written(self, tmp_dir):
-        downloading = tmp_dir / "abc_22222222.webm.part"
-        downloading.write_bytes(b"\x00")
-        assert clean_up()["deleted_files"] == 0
+    def test_spares_a_download_that_has_no_record_yet(self):
+        downloading = self._temp_file("abc_22222222.webm.part")
+        self.active_runs.start()
+        assert self.maintenance.clean_up()["deleted_files"] == 0
         assert downloading.exists()
 
+    def test_fails_an_abandoned_record_even_while_another_run_is_active(self):
+        abandoned = self.history.records.create("Abandoned", URL, 60)
+        running = self.history.records.create("Running", URL, 60)
+        self.active_runs.start().record_id = running
 
-class TestStartupCleanup:
-    def test_every_in_progress_record_is_a_leftover(self, tmp_results):
-        fresh = create_record("Fresh", "https://youtube.com/watch?v=a", 60)
-        done = create_record("Done", "https://youtube.com/watch?v=b", 60)
-        complete_record(done, "text")
-        assert fail_records_left_by_previous_run() == 1
-        assert get_record(fresh)["status"] == "error"
-        assert get_record(done)["status"] == "done"
+        assert self.maintenance.clean_up()["cleaned_records"] == 1
+        assert self._status(abandoned) == "error"
+        assert self._status(running) == "in_progress"
+
+
+class TestStartupCleanup(MaintenanceTest):
+    def test_every_in_progress_record_is_a_leftover(self):
+        fresh = self.history.records.create("Fresh", URL, 60)
+        done = self.history.records.create("Done", URL, 60)
+        self.history.records.complete(done, "text")
+        assert self.maintenance.fail_records_left_by_previous_run() == 1
+        assert self._status(fresh) == "error"
+        assert self._status(done) == "done"

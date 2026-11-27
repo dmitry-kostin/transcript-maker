@@ -99,7 +99,7 @@ To test the UI without a real API key or internet connection, add `?demo` to the
 http://127.0.0.1:8000?demo
 ```
 
-Demo mode runs the real transcription flow against simulated services (5s download + 5s transcription, fake text). No YouTube downloads or API calls are made, and no audio is cached. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
+Demo mode runs the real transcription flow against simulated services (5s download + 5s transcription, fake text). No YouTube downloads or API calls are made, and no audio is cached. Demo records are marked as such: demo mode cannot retranscribe or summarize a real record (and real mode cannot change a demo one), so placeholder text never replaces a real transcript. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
 
 ## Configuration
 
@@ -131,43 +131,60 @@ transcript-maker/
 ├── run.py                  # Single-script launcher (uvicorn)
 ├── .env.example            # Template for API key
 ├── .gitignore
-├── app/                    # Dependencies point downward: web → usecases → domain / storage / services
-│   ├── main.py             # FastAPI app factory + lifespan (startup log, stale-record cleanup)
+├── app/                    # Classes only, wired in wiring.py. Dependencies point downward: web → usecases → domain / storage / services
+│   ├── main.py             # Application(FastAPI): routes, lifespan (startup log, stale-record cleanup)
+│   ├── wiring.py           # Composition root: builds every store, service and use case
 │   ├── config.py           # pydantic-settings (env vars)
 │   ├── logging_setup.py    # Console + rotating-file logging
 │   ├── web/                # HTTP only
-│   │   ├── routes.py       # Real endpoints
-│   │   ├── demo_routes.py  # /api/demo/* — same handlers, simulated services
+│   │   ├── routes.py       # ReadRoutes, WorkRoutes (transcribe / retranscribe / summarize)
+│   │   ├── demo_routes.py  # /api/demo/* — the same WorkRoutes on simulated services
 │   │   ├── schemas.py      # Request models + validation
-│   │   └── shared.py       # Record lookup, error shape, SSE serialization
+│   │   ├── errors.py       # Error shape, use-case error → status code
+│   │   └── sse.py          # Use-case events → Server-Sent Events
 │   ├── usecases/           # What the app does; no FastAPI imports
 │   │   ├── transcription.py # download → chunk → transcribe → save (new + re-transcribe)
 │   │   ├── summarization.py # transcript → summary sidecar
+│   │   ├── records.py      # List / load / delete / reveal records
+│   │   ├── providers.py    # Which providers are configured
 │   │   ├── maintenance.py  # Stale records + temp file cleanup
-│   │   └── demo.py         # Fake download / chunk / transcribe / summarize
+│   │   ├── active_runs.py  # Which transcriptions are running right now
+│   │   ├── steps.py        # The outside world as a bundle of operations: real or demo
+│   │   └── errors.py       # Why a use case refused
 │   ├── domain/             # Pure rules, no I/O
 │   │   ├── model_policy.py # Provider table, model resolution
 │   │   └── limits.py       # Duration limits
-│   ├── storage/
-│   │   └── history.py      # Records, summaries, audio + chunk caches (markdown files)
+│   ├── storage/            # results/ on disk
+│   │   ├── history.py      # The four stores below, wired on one directory
+│   │   ├── record_store.py # Records (markdown + YAML frontmatter)
+│   │   ├── summary_store.py # Summary sidecars
+│   │   ├── audio_cache.py  # Downloaded audio kept beside its record
+│   │   ├── chunk_cache.py  # Finished chunks of a run in flight (resume)
+│   │   ├── results_directory.py # Record IDs → paths
+│   │   └── markdown_file.py # Frontmatter read/write
 │   ├── services/           # The outside world
 │   │   ├── clients.py      # OpenAI/Gemini API clients
 │   │   ├── downloader.py   # yt-dlp: download + extract audio
-│   │   ├── transcriber.py  # ffmpeg chunking + OpenAI/Gemini transcription
-│   │   └── summarizer.py   # Chat Completions for summarization
+│   │   ├── chunker.py      # ffmpeg / ffprobe: trim and split audio
+│   │   ├── transcriber.py  # OpenAI/Gemini transcription
+│   │   ├── summarizer.py   # Chat Completions for summarization
+│   │   ├── temp_files.py   # tmp/ housekeeping
+│   │   ├── demo.py         # Simulated download / chunk / transcribe / summarize
+│   │   └── desktop.py      # Reveal a file in Finder
 │   └── static/
 │       ├── index.html
 │       ├── style.css
 │       └── app.js
 ├── tests/                  # Mirrors app/: the tests for app/<pkg>/<module>.py are in tests/<pkg>/test_<module>.py
-│   ├── conftest.py         # Shared fixtures (tmp_results, client)
-│   ├── test_main.py        # App factory + startup
+│   ├── conftest.py         # Shared fixtures (tmp_results, history, client)
+│   ├── test_main.py        # Application + startup
+│   ├── test_wiring.py      # Composition root
 │   ├── test_integration.py # End-to-end tests (real APIs), spans all layers
-│   ├── web/                # test_routes.py, test_demo_routes.py, test_schemas.py
-│   ├── usecases/           # test_transcription.py, test_summarization.py, test_maintenance.py, test_demo.py
+│   ├── web/                # test_routes.py, test_demo_routes.py, test_schemas.py, test_errors.py, test_sse.py
+│   ├── usecases/           # test_transcription.py, test_summarization.py, test_records.py, test_steps.py, …
 │   ├── domain/             # test_model_policy.py, test_limits.py
-│   ├── storage/            # test_history.py
-│   └── services/           # test_clients.py, test_downloader.py, test_transcriber.py, test_summarizer.py
+│   ├── storage/            # test_record_store.py, test_summary_store.py, test_chunk_cache.py, …
+│   └── services/           # test_clients.py, test_downloader.py, test_chunker.py, test_transcriber.py, …
 ├── tmp/                    # Runtime temp files (gitignored)
 └── results/                # Saved transcripts as .md files (gitignored)
 ```

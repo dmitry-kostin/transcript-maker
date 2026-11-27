@@ -4,26 +4,33 @@ import logging
 import os
 import sys
 
+HOST = "127.0.0.1"
+PORT = 8000
 
-def main():
-    sys.path.insert(0, os.path.dirname(__file__))
 
-    try:
-        from app.config import settings  # noqa: F401
-    except Exception:
-        logging.error("TM_OPENAI_API_KEY is not set.")
-        print("  export TM_OPENAI_API_KEY=sk-...")
-        print("  or create a .env file with: TM_OPENAI_API_KEY=sk-...")
-        sys.exit(1)
+class Launcher:
+    def run(self) -> None:
+        sys.path.insert(0, os.path.dirname(__file__))
+        settings = self._load_settings()
 
-    logger = logging.getLogger(__name__)
-    logger.info("Starting Transcript Maker on http://127.0.0.1:8000")
-    logger.info("temp_dir=%s  results_dir=%s", settings.temp_dir, settings.results_dir)
+        logger = logging.getLogger(__name__)
+        logger.info("Starting Transcript Maker on http://%s:%d", HOST, PORT)
+        logger.info("temp_dir=%s  results_dir=%s", settings.temp_dir, settings.results_dir)
 
-    import uvicorn
+        import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, log_level="info", log_config=None)
+        uvicorn.run("app.main:Application", factory=True, host=HOST, port=PORT, log_level="info", log_config=None)
+
+    def _load_settings(self):
+        try:
+            from app.config import settings
+        except Exception:
+            logging.error("TM_OPENAI_API_KEY is not set.")
+            print("  export TM_OPENAI_API_KEY=sk-...")
+            print("  or create a .env file with: TM_OPENAI_API_KEY=sk-...")
+            sys.exit(1)
+        return settings
 
 
 if __name__ == "__main__":
-    main()
+    Launcher().run()

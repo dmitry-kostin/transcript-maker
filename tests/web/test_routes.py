@@ -1,7 +1,26 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-import app.storage.history as history_mod
-from app.storage.history import complete_record, create_record, get_summary
+import pytest
+
+from app.config import settings
+from app.services.summarizer import Summarizer
+
+
+@pytest.fixture
+def with_keys(monkeypatch):
+    """Both providers configured (dummy keys), default models pinned."""
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(settings, "google_api_key", "gk-test")
+    monkeypatch.setattr(settings, "transcribe_model", "gpt-transcribe")
+    monkeypatch.setattr(settings, "summarize_model", "gpt-6-luna")
+
+
+@pytest.fixture
+def summarizer(monkeypatch) -> AsyncMock:
+    """The real summarizer replaced by a mock. Request it before ``client``: the app binds its services when built."""
+    mock = AsyncMock(return_value="Mocked summary")
+    monkeypatch.setattr(Summarizer, "summarize", mock)
+    return mock
 
 
 class TestHistoryEndpoints:
@@ -10,22 +29,16 @@ class TestHistoryEndpoints:
         assert res.status_code == 200
         assert res.json() == []
 
-    def test_history_after_create(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+    def test_history_after_create(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
         res = client.get("/api/history")
         assert res.status_code == 200
         records = res.json()
         assert len(records) == 1
         assert records[0]["id"] == rid
 
-    def test_delete_valid_record(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+    def test_delete_valid_record(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
         res = client.delete(f"/api/history/{rid}")
         assert res.status_code == 200
         assert res.json() == {"ok": True}
@@ -48,9 +61,16 @@ class TestHistoryEndpoints:
     def test_reveal_nonexistent_id(self, client):
         res = client.post("/api/history/00000000/reveal")
         assert res.status_code == 404
+        assert res.json() == {"error": "Not found"}
 
 
 class TestTranscribeEndpoint:
+    def test_missing_api_key_is_refused_before_the_stream_starts(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "openai_api_key", "")
+        res = client.post("/api/transcribe", json={"url": "https://www.youtube.com/watch?v=abc123xyz", "model": "gpt-transcribe"})
+        assert res.status_code == 400
+        assert "TM_OPENAI_API_KEY" in res.json()["error"]
+
     def test_transcribe_invalid_url(self, client):
         res = client.post("/api/transcribe", json={"url": "https://vimeo.com/123"})
         assert res.status_code == 422
@@ -69,12 +89,9 @@ class TestTranscribeEndpoint:
 
 
 class TestGetRecordEndpoint:
-    def test_valid_record(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Hello transcript")
+    def test_valid_record(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Hello transcript")
         res = client.get(f"/api/history/{rid}")
         assert res.status_code == 200
         data = res.json()
@@ -100,63 +117,91 @@ class TestRetranscribeEndpoint:
         res = client.post("/api/history/00000000/retranscribe", json={"model": ""})
         assert res.status_code == 404
 
-    def test_in_progress_blocked(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+    def test_in_progress_blocked(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
         # Record is in_progress by default
         res = client.post(f"/api/history/{rid}/retranscribe", json={"model": ""})
         assert res.status_code == 409
+        assert res.json() == {"error": "Record is currently being processed"}
+
+    def test_demo_record_is_refused(self, client, with_keys, history):
+        rid = history.records.create("Demo: x", "x", 60, demo=True)
+        history.records.complete(rid, "placeholder")
+        res = client.post(f"/api/history/{rid}/retranscribe", json={"model": ""})
+        assert res.status_code == 409
+        assert "demo record" in res.json()["error"]
 
 
+@pytest.mark.usefixtures("with_keys")
 class TestSummarizeEndpoint:
     def test_invalid_id(self, client):
         res = client.post("/api/history/ZZZZZZZZ/summarize", json={"prompt": ""})
         assert res.status_code == 400
 
-    def test_not_done_record(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
+    def test_not_done_record(self, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
         res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
         assert res.status_code == 400
 
-    def test_successful_summarize(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "This is a test transcript with multiple words.")
-        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="Mocked summary") as mock_fn:
-            res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom"})
+    def test_missing_record(self, client):
+        res = client.post("/api/history/00000000/summarize", json={"prompt": ""})
+        assert res.status_code == 404
+
+    def test_missing_api_key(self, client, monkeypatch, history):
+        monkeypatch.setattr(settings, "openai_api_key", "")
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Text")
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+        assert res.status_code == 400
+        assert "TM_OPENAI_API_KEY" in res.json()["error"]
+
+    def test_summarizer_failure_is_a_500(self, summarizer, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Text")
+        summarizer.side_effect = RuntimeError("boom")
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+        assert res.status_code == 500
+        assert res.json() == {"error": "Summarization failed: boom"}
+
+    def test_successful_summarize(self, summarizer, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "This is a test transcript with multiple words.")
+        summarizer.return_value = "Mocked summary"
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom"})
         assert res.status_code == 200
         data = res.json()
         assert data["summary"] == "# Test\n\nMocked summary"
         assert data["prompt"] == "Custom"
-        mock_fn.assert_called_once_with(
-            "This is a test transcript with multiple words.", "Custom", model=""
+        assert data["model"] == "gpt-6-luna"
+        summarizer.assert_awaited_once_with(
+            "This is a test transcript with multiple words.", "Custom", "gpt-6-luna"
         )
         # Verify it was saved
-        saved = get_summary(rid)
+        saved = history.summaries.get(rid)
         assert saved is not None
         assert saved["summary"] == "# Test\n\nMocked summary"
+        assert saved["model"] == "gpt-6-luna"
 
-    def test_get_summary(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Transcript text")
-        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="The summary"):
-            client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+    def test_get_summary(self, summarizer, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Transcript text")
+        summarizer.return_value = "The summary"
+        client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
         res = client.get(f"/api/history/{rid}/summary")
         assert res.status_code == 200
         assert res.json()["summary"] == "# Test\n\nThe summary"
 
-    def test_get_summary_404(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Text")
+    def test_get_summary_404(self, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Text")
         res = client.get(f"/api/history/{rid}/summary")
         assert res.status_code == 404
 
-    def test_delete_cascades_to_summary(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Transcript text for summary test.")
-        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="Summary text"):
-            res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
+    def test_delete_cascades_to_summary(self, summarizer, client, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Transcript text for summary test.")
+        summarizer.return_value = "Summary text"
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
         assert res.status_code == 200
         # Summary exists
         assert client.get(f"/api/history/{rid}/summary").status_code == 200
@@ -167,7 +212,7 @@ class TestSummarizeEndpoint:
 
 
 class TestDurationLimitParam:
-    def test_transcribe_accepts_duration_limit(self, client):
+    def test_transcribe_accepts_duration_limit(self, client, with_keys):
         res = client.post("/api/transcribe", json={
             "url": "https://www.youtube.com/watch?v=abc123xyz",
             "duration_limit": 5,
@@ -182,12 +227,9 @@ class TestDurationLimitParam:
         })
         assert res.status_code == 422
 
-    def test_retranscribe_rejects_negative_duration_limit(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 600)
-        complete_record(rid, "Some text")
+    def test_retranscribe_rejects_negative_duration_limit(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 600)
+        history.records.complete(rid, "Some text")
         res = client.post(f"/api/history/{rid}/retranscribe", json={
             "model": "",
             "duration_limit": -1,
@@ -202,12 +244,9 @@ class TestDurationLimitParam:
         })
         assert res.status_code == 422
 
-    def test_retranscribe_rejects_excessive_duration_limit(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 600)
-        complete_record(rid, "Some text")
+    def test_retranscribe_rejects_excessive_duration_limit(self, client, tmp_path, monkeypatch, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 600)
+        history.records.complete(rid, "Some text")
         res = client.post(f"/api/history/{rid}/retranscribe", json={
             "model": "",
             "duration_limit": 999999,
@@ -294,13 +333,10 @@ class TestProvidersEndpoint:
         assert gemini["transcribe_model"] == "gemini-custom"
         assert gemini["summarize_model"] == "gemini-custom-sum"
 
-    def test_summarize_with_model_override(self, client, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir(exist_ok=True)
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Transcript text")
-        with patch("app.usecases.summarization.summarize_text", return_value="Mocked summary") as mock_fn:
-            res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom", "model": "gemini-2.0-flash"})
+    def test_summarize_with_model_override(self, summarizer, client, tmp_path, monkeypatch, with_keys, history):
+        rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 60)
+        history.records.complete(rid, "Transcript text")
+        summarizer.return_value = "Mocked summary"
+        res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom", "model": "gemini-2.0-flash"})
         assert res.status_code == 200
-        mock_fn.assert_called_once_with("Transcript text", "Custom", model="gemini-2.0-flash")
+        summarizer.assert_awaited_once_with("Transcript text", "Custom", "gemini-2.0-flash")
