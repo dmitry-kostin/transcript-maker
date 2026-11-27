@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -13,7 +12,7 @@ def tmp_results(tmp_path, monkeypatch):
     """Provide a temporary results dir and patch history.RESULTS_DIR."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
-    import app.history as history_mod
+    import app.storage.history as history_mod
     monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
     return results_dir
 
@@ -25,3 +24,12 @@ def tmp_audio(tmp_path):
     # Write 1 MB of zeros (not real audio, but enough for size-based logic)
     audio_file.write_bytes(b"\x00" * (1024 * 1024))
     return audio_file
+
+
+@pytest.fixture
+def client(tmp_results):
+    """TestClient on a temporary results dir. Startup (lifespan) does not run."""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    return TestClient(create_app())

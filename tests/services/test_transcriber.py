@@ -2,10 +2,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
-from app.clients import is_gemini_model, get_client
-from app.transcriber import (
-    prepare_chunks, cleanup_temp_files, MAX_UPLOAD_SIZE_MB,
-    resolve_model,
+from app.services.transcriber import (
+    prepare_chunks, cleanup_temp_files,
     transcribe_chunk, _transcribe_base, _transcribe_gemini,
 )
 
@@ -19,9 +17,9 @@ class TestPrepareChunksSmallFile:
         audio.write_bytes(b"\x00" * (1024 * 1024))
 
         # Patch settings to use 24MB limit
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
-        monkeypatch.setattr("app.transcriber._get_duration", lambda _: 600.0)
+        monkeypatch.setattr("app.services.transcriber._get_duration", lambda _: 600.0)
 
         result = prepare_chunks(audio)
         assert result == [audio]
@@ -35,7 +33,7 @@ class TestPrepareChunksLargeFile:
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"\x00" * (30 * 1024 * 1024))
 
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 
@@ -54,7 +52,7 @@ class TestPrepareChunksLargeFile:
                 return MagicMock()
             return MagicMock()
 
-        monkeypatch.setattr("app.transcriber.subprocess.run", mock_subprocess_run)
+        monkeypatch.setattr("app.services.transcriber.subprocess.run", mock_subprocess_run)
 
         result = prepare_chunks(audio)
         assert len(result) == 2  # 30MB / 24MB limit ≈ 2 chunks
@@ -63,7 +61,7 @@ class TestPrepareChunksLargeFile:
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"\x00" * (30 * 1024 * 1024))
 
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 
@@ -80,7 +78,7 @@ class TestPrepareChunksLargeFile:
                 return MagicMock()
             return MagicMock()
 
-        monkeypatch.setattr("app.transcriber.subprocess.run", mock_subprocess_run)
+        monkeypatch.setattr("app.services.transcriber.subprocess.run", mock_subprocess_run)
 
         with pytest.raises(RuntimeError, match="exceeds"):
             prepare_chunks(audio)
@@ -93,7 +91,7 @@ class TestDurationLimit:
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"\x00" * (1024 * 1024))
 
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
 
         ffmpeg_calls = []
@@ -110,7 +108,7 @@ class TestDurationLimit:
                 return MagicMock()
             return MagicMock()
 
-        monkeypatch.setattr("app.transcriber.subprocess.run", mock_subprocess_run)
+        monkeypatch.setattr("app.services.transcriber.subprocess.run", mock_subprocess_run)
 
         result = prepare_chunks(audio, duration_limit=300)
         assert len(result) == 1
@@ -127,9 +125,9 @@ class TestDurationLimit:
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"\x00" * (1024 * 1024))
 
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
-        monkeypatch.setattr("app.transcriber._get_duration", lambda _: 200.0)
+        monkeypatch.setattr("app.services.transcriber._get_duration", lambda _: 200.0)
 
         result = prepare_chunks(audio, duration_limit=300)
         assert result == [audio]
@@ -138,78 +136,12 @@ class TestDurationLimit:
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"\x00" * (1024 * 1024))
 
-        import app.transcriber as mod
+        import app.services.transcriber as mod
         monkeypatch.setattr(mod.settings, "max_chunk_size_mb", 24.0)
-        monkeypatch.setattr("app.transcriber._get_duration", lambda _: 600.0)
+        monkeypatch.setattr("app.services.transcriber._get_duration", lambda _: 600.0)
 
         result = prepare_chunks(audio, duration_limit=None)
         assert result == [audio]
-
-
-class TestIsGeminiModel:
-    def test_gemini_model(self):
-        assert is_gemini_model("gemini-3-flash-preview") is True
-
-    def test_gemini_other(self):
-        assert is_gemini_model("gemini-2.0-flash") is True
-
-    def test_openai_model(self):
-        assert is_gemini_model("gpt-4o-transcribe") is False
-
-    def test_empty_string(self):
-        assert is_gemini_model("") is False
-
-
-class TestResolveModel:
-    def test_empty_uses_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-transcribe")
-        assert resolve_model("") == "gpt-transcribe"
-
-    def test_empty_uses_default_gemini(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert resolve_model("") == "gemini-3-flash-preview"
-
-    def test_explicit_model(self):
-        assert resolve_model("gpt-transcribe") == "gpt-transcribe"
-        assert resolve_model("gemini-3-flash-preview") == "gemini-3-flash-preview"
-
-    def test_legacy_diarize_suffix_maps_to_base_model(self):
-        """Old records carry '-diarize' model names; they resolve to the plain model."""
-        assert resolve_model("gpt-4o-transcribe-diarize") == "gpt-4o-transcribe"
-        assert resolve_model("gemini-2.0-flash-diarize") == "gemini-2.0-flash"
-
-    def test_bare_diarize_suffix_uses_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-transcribe")
-        assert resolve_model("-diarize") == "gpt-transcribe"
-
-
-class TestGetClient:
-    def test_openai_client(self, monkeypatch):
-        import app.clients as mod
-        monkeypatch.setattr(mod.settings, "openai_api_key", "sk-test")
-        client = get_client("gpt-4o-transcribe")
-        assert client.base_url.host == "api.openai.com"
-
-    def test_openai_client_missing_key(self, monkeypatch):
-        import app.clients as mod
-        monkeypatch.setattr(mod.settings, "openai_api_key", "")
-        with pytest.raises(ValueError, match="TM_OPENAI_API_KEY"):
-            get_client("gpt-4o-transcribe")
-
-    def test_gemini_client_with_key(self, monkeypatch):
-        import app.clients as mod
-        monkeypatch.setattr(mod.settings, "google_api_key", "test-key")
-        client = get_client("gemini-3-flash-preview")
-        assert "generativelanguage.googleapis.com" in str(client.base_url)
-
-    def test_gemini_client_missing_key(self, monkeypatch):
-        import app.clients as mod
-        monkeypatch.setattr(mod.settings, "google_api_key", "")
-        with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
-            get_client("gemini-3-flash-preview")
 
 
 class TestTranscribeChunkRouting:
@@ -221,34 +153,20 @@ class TestTranscribeChunkRouting:
         self.chunk.write_bytes(b"\x00" * 1024)
 
     @pytest.mark.asyncio
-    async def test_default_openai_calls_base(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
+    async def test_openai_model_calls_audio_api(self, monkeypatch):
         mock = AsyncMock(return_value="hello")
-        with patch("app.transcriber._transcribe_base", mock):
+        with patch("app.services.transcriber._transcribe_base", mock):
             result = await transcribe_chunk(self.chunk, model="gpt-4o-transcribe")
         mock.assert_awaited_once_with(self.chunk, "gpt-4o-transcribe")
         assert result == "hello"
 
     @pytest.mark.asyncio
-    async def test_gemini_default_calls_gemini(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
+    async def test_gemini_model_calls_chat_api(self, monkeypatch):
         mock = AsyncMock(return_value="gemini text")
-        with patch("app.transcriber._transcribe_gemini", mock):
+        with patch("app.services.transcriber._transcribe_gemini", mock):
             result = await transcribe_chunk(self.chunk, model="gemini-3-flash-preview")
         mock.assert_awaited_once_with(self.chunk, "gemini-3-flash-preview")
         assert result == "gemini text"
-
-    @pytest.mark.asyncio
-    async def test_empty_model_uses_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        mock = AsyncMock(return_value="hello")
-        with patch("app.transcriber._transcribe_base", mock):
-            result = await transcribe_chunk(self.chunk, model="")
-        mock.assert_awaited_once_with(self.chunk, "gpt-4o-transcribe")
-        assert result == "hello"
 
 
 class TestTranscribeGemini:
@@ -273,7 +191,7 @@ class TestTranscribeGemini:
     @pytest.mark.asyncio
     async def test_verbatim_prompt(self):
         client = self._mock_client("Hello world")
-        with patch("app.transcriber.get_client", return_value=client):
+        with patch("app.services.transcriber.get_client", return_value=client):
             result = await _transcribe_gemini(self.chunk, "gemini-3-flash-preview")
         assert result == "Hello world"
         call_kwargs = client.chat.completions.create.call_args.kwargs
@@ -283,7 +201,7 @@ class TestTranscribeGemini:
     @pytest.mark.asyncio
     async def test_sends_base64_audio(self):
         client = self._mock_client("text")
-        with patch("app.transcriber.get_client", return_value=client):
+        with patch("app.services.transcriber.get_client", return_value=client):
             await _transcribe_gemini(self.chunk, "gemini-3-flash-preview")
         call_kwargs = client.chat.completions.create.call_args.kwargs
         audio_part = call_kwargs["messages"][0]["content"][1]
@@ -294,7 +212,7 @@ class TestTranscribeGemini:
     async def test_sends_no_reasoning_effort(self):
         """gemini-3.5-transcribe is not a reasoning model and rejects the parameter with a 400."""
         client = self._mock_client("text")
-        with patch("app.transcriber.get_client", return_value=client):
+        with patch("app.services.transcriber.get_client", return_value=client):
             await _transcribe_gemini(self.chunk, "gemini-3.5-transcribe")
         assert "reasoning_effort" not in client.chat.completions.create.call_args.kwargs
 
@@ -311,7 +229,7 @@ class TestTranscribeBase:
     async def test_returns_stripped_text(self):
         mock_client = MagicMock()
         mock_client.audio.transcriptions.create = AsyncMock(return_value="  Hello world  ")
-        with patch("app.transcriber.get_client", return_value=mock_client):
+        with patch("app.services.transcriber.get_client", return_value=mock_client):
             result = await _transcribe_base(self.chunk, "gpt-4o-transcribe")
         assert result == "Hello world"
 
@@ -346,20 +264,56 @@ class TestCleanupTempFiles:
         assert not trimmed.exists()
 
 
-class TestClientLimits:
-    """A stalled API call must fail in minutes, not sit for the SDK's 10-minute default."""
+class TestPrepareChunksByDurationAndSize:
+    def test_small_file_short_duration_no_chunking(self, tmp_path):
+        """File under size AND duration limits → no chunking."""
+        audio = tmp_path / "short.mp3"
+        audio.write_bytes(b"\x00" * 1_000_000)  # ~1 MB
+        with patch("app.services.transcriber._get_duration", return_value=600.0):
+            chunks = prepare_chunks(audio)
+        assert chunks == [audio]
 
-    @pytest.mark.parametrize("model", ["gpt-transcribe", "gemini-3.5-transcribe"])
-    def test_clients_use_configured_timeout_and_retries(self, model, monkeypatch):
-        import app.clients as mod
-        monkeypatch.setattr(mod.settings, "openai_api_key", "sk-test")
-        monkeypatch.setattr(mod.settings, "google_api_key", "gk-test")
-        monkeypatch.setattr(mod.settings, "api_timeout_seconds", 42.0)
-        monkeypatch.setattr(mod.settings, "api_max_retries", 0)
-        client = get_client(model)
-        assert client.timeout == 42.0
-        assert client.max_retries == 0
+    def test_small_file_long_duration_triggers_chunking(self, tmp_path):
+        """File under size limit but over duration limit → must chunk."""
+        audio = tmp_path / "long.mp3"
+        audio.write_bytes(b"\x00" * 5_000_000)  # ~5 MB, well under 24 MB
+        long_duration = 3000.0  # 50 minutes, way over 600s
 
-    def test_default_timeout_is_well_under_sdk_default(self):
-        from app.config import Settings
-        assert Settings.model_fields["api_timeout_seconds"].default <= 300
+        # 3000s / 600s = 5 chunks
+        for i in range(5):
+            (tmp_path / f"long_chunk{i}.mp3").write_bytes(b"\x00" * 1_000_000)
+
+        call_count = 0
+
+        def fake_ffmpeg(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(returncode=0)
+
+        with patch("app.services.transcriber._get_duration", return_value=long_duration), \
+             patch("app.services.transcriber.subprocess.run", side_effect=fake_ffmpeg):
+            chunks = prepare_chunks(audio)
+
+        assert len(chunks) == 5  # 3000s / 600s = 5 chunks
+
+    def test_large_file_short_duration_triggers_chunking(self, tmp_path):
+        """File over size limit but short duration → chunk by size."""
+        audio = tmp_path / "big.mp3"
+        audio.write_bytes(b"\x00" * 30_000_000)  # ~30 MB, over 24 MB limit
+
+        chunk_paths = [tmp_path / "big_chunk0.mp3", tmp_path / "big_chunk1.mp3"]
+        for p in chunk_paths:
+            p.write_bytes(b"\x00" * 12_000_000)
+
+        call_count = 0
+
+        def fake_ffmpeg(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(returncode=0)
+
+        with patch("app.services.transcriber._get_duration", return_value=600.0), \
+             patch("app.services.transcriber.subprocess.run", side_effect=fake_ffmpeg):
+            chunks = prepare_chunks(audio)
+
+        assert len(chunks) >= 2

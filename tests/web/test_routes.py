@@ -1,22 +1,7 @@
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-import pytest
-from fastapi.testclient import TestClient
-
-from app.main import create_app
-from app.history import create_record, complete_record, get_record, get_summary, RESULTS_DIR
-from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS
-import app.history as history_mod
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """TestClient with a temporary results dir."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-    app = create_app()
-    return TestClient(app)
+import app.storage.history as history_mod
+from app.storage.history import complete_record, create_record, get_summary
 
 
 class TestHistoryEndpoints:
@@ -138,7 +123,7 @@ class TestSummarizeEndpoint:
     def test_successful_summarize(self, client):
         rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
         complete_record(rid, "This is a test transcript with multiple words.")
-        with patch("app.api.summarize_text", new_callable=AsyncMock, return_value="Mocked summary") as mock_fn:
+        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="Mocked summary") as mock_fn:
             res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom"})
         assert res.status_code == 200
         data = res.json()
@@ -155,7 +140,7 @@ class TestSummarizeEndpoint:
     def test_get_summary(self, client):
         rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
         complete_record(rid, "Transcript text")
-        with patch("app.api.summarize_text", new_callable=AsyncMock, return_value="The summary"):
+        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="The summary"):
             client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
         res = client.get(f"/api/history/{rid}/summary")
         assert res.status_code == 200
@@ -167,23 +152,10 @@ class TestSummarizeEndpoint:
         res = client.get(f"/api/history/{rid}/summary")
         assert res.status_code == 404
 
-    def test_demo_summarize(self, client):
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
-        complete_record(rid, "Transcript text")
-        res = client.post(f"/api/demo/history/{rid}/summarize", json={"prompt": "Custom"})
-        assert res.status_code == 200
-        data = res.json()
-        assert data["summary"].startswith("# Test")
-        assert "Key Points" in data["summary"]
-        assert "prompt" in data
-        # Verify summary was saved
-        saved = get_summary(rid)
-        assert saved is not None
-
     def test_delete_cascades_to_summary(self, client):
         rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
         complete_record(rid, "Transcript text for summary test.")
-        with patch("app.api.summarize_text", new_callable=AsyncMock, return_value="Summary text"):
+        with patch("app.usecases.summarization.summarize_text", new_callable=AsyncMock, return_value="Summary text"):
             res = client.post(f"/api/history/{rid}/summarize", json={"prompt": ""})
         assert res.status_code == 200
         # Summary exists
@@ -192,61 +164,6 @@ class TestSummarizeEndpoint:
         assert client.delete(f"/api/history/{rid}").status_code == 200
         # Summary is gone too
         assert client.get(f"/api/history/{rid}/summary").status_code == 404
-
-
-class TestPrepareChunks:
-    def test_small_file_short_duration_no_chunking(self, tmp_path):
-        """File under size AND duration limits → no chunking."""
-        audio = tmp_path / "short.mp3"
-        audio.write_bytes(b"\x00" * 1_000_000)  # ~1 MB
-        with patch("app.transcriber._get_duration", return_value=600.0):
-            chunks = prepare_chunks(audio)
-        assert chunks == [audio]
-
-    def test_small_file_long_duration_triggers_chunking(self, tmp_path):
-        """File under size limit but over duration limit → must chunk."""
-        audio = tmp_path / "long.mp3"
-        audio.write_bytes(b"\x00" * 5_000_000)  # ~5 MB, well under 24 MB
-        long_duration = 3000.0  # 50 minutes, way over 600s
-
-        # 3000s / 600s = 5 chunks
-        for i in range(5):
-            (tmp_path / f"long_chunk{i}.mp3").write_bytes(b"\x00" * 1_000_000)
-
-        call_count = 0
-
-        def fake_ffmpeg(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return MagicMock(returncode=0)
-
-        with patch("app.transcriber._get_duration", return_value=long_duration), \
-             patch("app.transcriber.subprocess.run", side_effect=fake_ffmpeg):
-            chunks = prepare_chunks(audio)
-
-        assert len(chunks) == 5  # 3000s / 600s = 5 chunks
-
-    def test_large_file_short_duration_triggers_chunking(self, tmp_path):
-        """File over size limit but short duration → chunk by size."""
-        audio = tmp_path / "big.mp3"
-        audio.write_bytes(b"\x00" * 30_000_000)  # ~30 MB, over 24 MB limit
-
-        chunk_paths = [tmp_path / "big_chunk0.mp3", tmp_path / "big_chunk1.mp3"]
-        for p in chunk_paths:
-            p.write_bytes(b"\x00" * 12_000_000)
-
-        call_count = 0
-
-        def fake_ffmpeg(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return MagicMock(returncode=0)
-
-        with patch("app.transcriber._get_duration", return_value=600.0), \
-             patch("app.transcriber.subprocess.run", side_effect=fake_ffmpeg):
-            chunks = prepare_chunks(audio)
-
-        assert len(chunks) >= 2
 
 
 class TestDurationLimitParam:
@@ -299,13 +216,13 @@ class TestDurationLimitParam:
 
     def test_duration_limit_zero_means_no_limit(self):
         """duration_limit=0 passes validation — means 'no limit' (Issue #19)."""
-        from app.api import TranscribeRequest
+        from app.web.schemas import TranscribeRequest
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", duration_limit=0)
         assert req.duration_limit == 0
 
     def test_legacy_diarize_field_is_ignored(self):
         """Speaker detection was removed; old clients still sending the flag don't break."""
-        from app.api import TranscribeRequest, RetranscribeRequest
+        from app.web.schemas import TranscribeRequest, RetranscribeRequest
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", diarize=True)
         assert not hasattr(req, "diarize")
         assert RetranscribeRequest(diarize=True, duration_limit=5).duration_limit == 5
@@ -313,7 +230,7 @@ class TestDurationLimitParam:
 
 class TestProvidersEndpoint:
     def test_both_keys(self, client, monkeypatch):
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         res = client.get("/api/providers")
@@ -325,7 +242,7 @@ class TestProvidersEndpoint:
         assert "gemini" in ids
 
     def test_openai_only(self, client, monkeypatch):
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "")
         res = client.get("/api/providers")
@@ -334,7 +251,7 @@ class TestProvidersEndpoint:
         assert data["providers"][0]["id"] == "openai"
 
     def test_gemini_only(self, client, monkeypatch):
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         res = client.get("/api/providers")
@@ -343,7 +260,7 @@ class TestProvidersEndpoint:
         assert data["providers"][0]["id"] == "gemini"
 
     def test_no_keys(self, client, monkeypatch):
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "")
         res = client.get("/api/providers")
@@ -351,7 +268,7 @@ class TestProvidersEndpoint:
         assert len(data["providers"]) == 0
 
     def test_gemini_default_model_used(self, client, monkeypatch):
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         monkeypatch.setattr(api_mod.settings, "transcribe_model", "gemini-2.5-flash")
@@ -366,7 +283,7 @@ class TestProvidersEndpoint:
 
     def test_providers_use_per_provider_settings(self, client, monkeypatch):
         """Per-provider model settings are configurable via env vars."""
-        import app.api as api_mod
+        import app.config as api_mod
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         monkeypatch.setattr(api_mod.settings, "gemini_transcribe_model", "gemini-custom")
@@ -383,7 +300,7 @@ class TestProvidersEndpoint:
         monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
         rid = create_record("Test", "https://youtube.com/watch?v=abc", 60)
         complete_record(rid, "Transcript text")
-        with patch("app.api.summarize_text", return_value="Mocked summary") as mock_fn:
+        with patch("app.usecases.summarization.summarize_text", return_value="Mocked summary") as mock_fn:
             res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom", "model": "gemini-2.0-flash"})
         assert res.status_code == 200
         mock_fn.assert_called_once_with("Transcript text", "Custom", model="gemini-2.0-flash")

@@ -1,12 +1,9 @@
-from pathlib import Path
-
 import pytest
-from app.history import (
+from app.storage.history import (
     _slugify, _write_md, _parse_md,
     create_record, complete_record, fail_record,
     get_history, get_record, reset_record,
     delete_record, get_result_path,
-    cleanup_stale_records,
     save_audio, get_audio_path, find_cached_audio_by_url,
     save_summary, get_summary, delete_summary,
     load_chunk_cache, save_chunk_cache, delete_chunk_cache,
@@ -154,20 +151,6 @@ class TestEdgeCases:
         assert len(records) == 1
         assert records[0]["title"] == "Good"
 
-    def test_cleanup_stale_records(self, tmp_results):
-        rid1 = create_record("Stale 1", "https://youtube.com/watch?v=a", 10)
-        rid2 = create_record("Stale 2", "https://youtube.com/watch?v=b", 20)
-        rid3 = create_record("Done One", "https://youtube.com/watch?v=c", 30)
-        complete_record(rid3, "Finished transcript")
-
-        cleanup_stale_records()
-
-        records = get_history()
-        status_map = {r["title"]: r["status"] for r in records}
-        assert status_map["Stale 1"] == "error"
-        assert status_map["Stale 2"] == "error"
-        assert status_map["Done One"] == "done"
-
 
 class TestGetRecord:
     def test_existing(self, tmp_results):
@@ -194,8 +177,33 @@ class TestResetRecord:
         record = get_record(rid)
         assert record["status"] == "in_progress"
         assert record["model"] == "gpt-4o-transcribe-diarize"
-        assert record["body"] == ""
         assert record["error"] == ""
+
+    def test_keeps_the_previous_transcript_until_a_new_one_completes(self, tmp_results):
+        """A re-transcription that never finishes must not cost the old transcript."""
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
+        complete_record(rid, "Old text")
+        reset_record(rid, model="m2")
+        assert get_record(rid)["body"] == "Old text"
+        fail_record(rid, "boom")
+        failed = get_record(rid)
+        assert failed["status"] == "error"
+        assert failed["body"] == "Old text"
+        reset_record(rid)
+        complete_record(rid, "New text")
+        assert get_record(rid)["body"] == "New text"
+
+    def test_refuses_a_record_that_is_already_in_progress(self, tmp_results):
+        """Two runs must not work on one record at the same time."""
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="m1")
+        assert reset_record(rid, model="m2") is False
+        assert get_record(rid)["model"] == "m1"
+
+    def test_without_a_model_keeps_the_stored_one(self, tmp_results):
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="m1")
+        complete_record(rid, "Text")
+        assert reset_record(rid) is True
+        assert get_record(rid)["model"] == "m1"
 
     def test_preserves_metadata(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 120)
@@ -505,7 +513,7 @@ class TestChunkCache:
 
 class TestStaleRecords:
     def test_only_in_progress_records_are_failed(self, tmp_results):
-        from app.history import fail_stale_records
+        from app.storage.history import fail_stale_records
         stuck = create_record("Stuck", "https://youtube.com/watch?v=a", 60)
         done = create_record("Done", "https://youtube.com/watch?v=b", 60)
         complete_record(done, "text")
@@ -516,7 +524,7 @@ class TestStaleRecords:
 
     def test_recent_records_survive_an_age_threshold(self, tmp_results):
         import os, time
-        from app.history import fail_stale_records, get_result_path
+        from app.storage.history import fail_stale_records, get_result_path
         fresh = create_record("Fresh", "https://youtube.com/watch?v=a", 60)
         old = create_record("Old", "https://youtube.com/watch?v=b", 60)
         an_hour_ago = time.time() - 3600
@@ -525,6 +533,25 @@ class TestStaleRecords:
         assert get_record(old)["status"] == "error"
         assert get_record(fresh)["status"] == "in_progress"
 
+    def test_a_recently_finished_chunk_counts_as_activity(self, tmp_results):
+        """The record file is not rewritten during a long multi-chunk run; the chunk cache is."""
+        import os, time
+        from app.storage.history import fail_stale_records, get_result_path, save_chunk_cache
+        rid = create_record("Long run", "https://youtube.com/watch?v=a", 3600)
+        an_hour_ago = time.time() - 3600
+        os.utime(get_result_path(rid), (an_hour_ago, an_hour_ago))
+        save_chunk_cache(rid, "m", 6, ["first chunk"])
+        assert fail_stale_records("stale", older_than_seconds=600) == 0
+        assert get_record(rid)["status"] == "in_progress"
+
+    def test_has_in_progress_records(self, tmp_results):
+        from app.storage.history import has_in_progress_records
+        assert has_in_progress_records() is False
+        rid = create_record("Running", "https://youtube.com/watch?v=a", 60)
+        assert has_in_progress_records() is True
+        complete_record(rid, "text")
+        assert has_in_progress_records() is False
+
 
 class TestRecordId:
     @pytest.mark.parametrize("value,ok", [
@@ -532,7 +559,7 @@ class TestRecordId:
         ("0a1b2c3d4", False), ("../../ab", False), ("", False),
     ])
     def test_is_valid_record_id(self, value, ok):
-        from app.history import is_valid_record_id
+        from app.storage.history import is_valid_record_id
         assert is_valid_record_id(value) is ok
 
 
@@ -541,7 +568,7 @@ class TestFrontmatterOrder:
 
     def _keys(self, rid: str) -> list[str]:
         import yaml
-        from app.history import get_result_path
+        from app.storage.history import get_result_path
         text = get_result_path(rid).read_text()
         return list(yaml.safe_load(text.split("---", 2)[1]).keys())
 

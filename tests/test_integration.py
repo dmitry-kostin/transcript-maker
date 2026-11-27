@@ -17,11 +17,11 @@ from pathlib import Path
 import pytest
 from json_repair import repair_json
 
-from app.clients import get_client
+from app.services.clients import get_client
 from app.config import PROJECT_ROOT, settings
-from app.downloader import download_audio
-from app.summarizer import summarize_text
-from app.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
+from app.services.downloader import download_audio
+from app.services.summarizer import summarize_text
+from app.services.transcriber import prepare_chunks, transcribe_chunk, cleanup_temp_files
 
 # Test video (~5.5 min)
 TEST_VIDEO_URL = "https://www.youtube.com/watch?v=ocGJWc2F1Yk"
@@ -245,7 +245,7 @@ def _debug_summary(
 class TestIntegration:
     @pytest.mark.asyncio
     async def test_download_returns_valid_audio(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
         path, duration, title = await download_audio(TEST_VIDEO_URL)
         try:
@@ -259,7 +259,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_with_history(self, tmp_path, monkeypatch):
         """Single Whisper call covering: transcription, chunking, and history record creation."""
-        import app.history as history_mod
+        import app.storage.history as history_mod
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
@@ -273,7 +273,7 @@ class TestIntegration:
             # Transcription
             texts = []
             for chunk in chunks:
-                text = await transcribe_chunk(chunk)
+                text = await transcribe_chunk(chunk, model=settings.transcribe_model)
                 assert len(text) > 0
                 assert isinstance(text, str)
                 texts.append(text)
@@ -300,7 +300,7 @@ class TestIntegration:
         path, duration, title = await _get_test_audio(tmp_path)
         try:
             chunks = prepare_chunks(path, duration_limit=DURATION_LIMIT)
-            text = await transcribe_chunk(chunks[0])
+            text = await transcribe_chunk(chunks[0], model=settings.transcribe_model)
             assert len(text) > 0
             assert isinstance(text, str)
 
@@ -325,7 +325,7 @@ class TestIntegration:
         path, duration, title = await _get_test_audio(tmp_path)
         try:
             chunks = prepare_chunks(path, duration_limit=DURATION_LIMIT)
-            transcript = await transcribe_chunk(chunks[0])
+            transcript = await transcribe_chunk(chunks[0], model=settings.transcribe_model)
             assert len(transcript) > 0
 
             summary = await summarize_text(transcript)

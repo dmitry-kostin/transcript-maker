@@ -99,7 +99,7 @@ To test the UI without a real API key or internet connection, add `?demo` to the
 http://127.0.0.1:8000?demo
 ```
 
-Demo mode simulates the full pipeline (5s download + 5s transcription) with fake data. No YouTube downloads or API calls are made. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
+Demo mode runs the real transcription flow against simulated services (5s download + 5s transcription, fake text). No YouTube downloads or API calls are made, and no audio is cached. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
 
 ## Configuration
 
@@ -131,32 +131,43 @@ transcript-maker/
 ├── run.py                  # Single-script launcher (uvicorn)
 ├── .env.example            # Template for API key
 ├── .gitignore
-├── app/
-│   ├── __init__.py
-│   ├── main.py             # FastAPI app factory, logging setup, startup log
+├── app/                    # Dependencies point downward: web → usecases → domain / storage / services
+│   ├── main.py             # FastAPI app factory + lifespan (startup log, stale-record cleanup)
 │   ├── config.py           # pydantic-settings (env vars)
-│   ├── api.py              # HTTP only: request validation, routes, SSE serialization
-│   ├── pipeline.py         # Transcription use case (download → chunk → transcribe → save)
-│   ├── model_policy.py     # Model naming + provider rules (pure, no I/O)
-│   ├── clients.py          # OpenAI/Gemini API clients
-│   ├── downloader.py       # yt-dlp: download + extract audio
-│   ├── transcriber.py      # ffmpeg chunking + OpenAI/Gemini transcription
-│   ├── summarizer.py       # Chat Completions for summarization (OpenAI + Gemini)
-│   ├── history.py          # Persistence layer (markdown files)
+│   ├── logging_setup.py    # Console + rotating-file logging
+│   ├── web/                # HTTP only
+│   │   ├── routes.py       # Real endpoints
+│   │   ├── demo_routes.py  # /api/demo/* — same handlers, simulated services
+│   │   ├── schemas.py      # Request models + validation
+│   │   └── shared.py       # Record lookup, error shape, SSE serialization
+│   ├── usecases/           # What the app does; no FastAPI imports
+│   │   ├── transcription.py # download → chunk → transcribe → save (new + re-transcribe)
+│   │   ├── summarization.py # transcript → summary sidecar
+│   │   ├── maintenance.py  # Stale records + temp file cleanup
+│   │   └── demo.py         # Fake download / chunk / transcribe / summarize
+│   ├── domain/             # Pure rules, no I/O
+│   │   ├── model_policy.py # Provider table, model resolution
+│   │   └── limits.py       # Duration limits
+│   ├── storage/
+│   │   └── history.py      # Records, summaries, audio + chunk caches (markdown files)
+│   ├── services/           # The outside world
+│   │   ├── clients.py      # OpenAI/Gemini API clients
+│   │   ├── downloader.py   # yt-dlp: download + extract audio
+│   │   ├── transcriber.py  # ffmpeg chunking + OpenAI/Gemini transcription
+│   │   └── summarizer.py   # Chat Completions for summarization
 │   └── static/
 │       ├── index.html
 │       ├── style.css
 │       └── app.js
-├── tests/
-│   ├── conftest.py         # Shared fixtures
-│   ├── test_history.py     # History module tests
-│   ├── test_downloader.py  # Downloader unit tests (mocked yt-dlp)
-│   ├── test_transcriber.py # Transcriber unit tests (mocked ffmpeg)
-│   ├── test_summarizer.py  # Summarizer unit tests
-│   ├── test_validation.py  # URL validation tests
-│   ├── test_api_endpoints.py # API endpoint tests (TestClient)
-│   ├── test_pipeline.py    # Transcription use case tests (all I/O mocked)
-│   └── test_integration.py # End-to-end tests (real APIs)
+├── tests/                  # Mirrors app/: the tests for app/<pkg>/<module>.py are in tests/<pkg>/test_<module>.py
+│   ├── conftest.py         # Shared fixtures (tmp_results, client)
+│   ├── test_main.py        # App factory + startup
+│   ├── test_integration.py # End-to-end tests (real APIs), spans all layers
+│   ├── web/                # test_routes.py, test_demo_routes.py, test_schemas.py
+│   ├── usecases/           # test_transcription.py, test_summarization.py, test_maintenance.py, test_demo.py
+│   ├── domain/             # test_model_policy.py, test_limits.py
+│   ├── storage/            # test_history.py
+│   └── services/           # test_clients.py, test_downloader.py, test_transcriber.py, test_summarizer.py
 ├── tmp/                    # Runtime temp files (gitignored)
 └── results/                # Saved transcripts as .md files (gitignored)
 ```
@@ -209,7 +220,7 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
 
 ### POST /api/history/{id}/retranscribe
 
-Re-transcribes an existing record using its stored URL. Returns an SSE stream identical to `/api/transcribe`. Audio is cached after the first download. Re-transcribe reuses cached audio without re-downloading from YouTube.
+Re-transcribes an existing record using its stored URL. Returns an SSE stream identical to `/api/transcribe`. Audio is cached after the first download. Re-transcribe reuses cached audio without re-downloading from YouTube. The previous transcript stays in the file until the new one completes — a failed or cancelled re-transcription marks the record as failed but does not erase it. A second re-transcription of a record that is already running is refused.
 
 **Request:**
 ```json
@@ -316,7 +327,7 @@ Records are sorted newest-first by `created_at`.
 
 1. **Validate** — reject non-YouTube URLs and playlist URLs (422)
 2. **Download** — yt-dlp extracts audio as 64kbps MP3 (async via thread pool), or reuse cached audio
-3. **Guard** — reject videos longer than 4 hours; check for client disconnect
+3. **Guard** — reject requests for more than 4 hours of audio (a "first N minutes" limit counts, so the start of a longer video is fine); check for client disconnect
 4. **Create record** — write `.md` file with `status: in_progress` and selected model
 5. **Truncate** — if `duration_limit` is set, ffmpeg trims audio to the specified length
 6. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)

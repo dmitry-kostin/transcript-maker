@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from app.api import TranscribeRequest
+from app.web.schemas import TranscribeRequest
 
 
 class TestTranscribeRequestValidation:

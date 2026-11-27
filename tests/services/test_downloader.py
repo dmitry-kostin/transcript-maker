@@ -1,15 +1,13 @@
-import asyncio
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
-from app.downloader import download_audio, DownloadError
+from app.services.downloader import download_audio, DownloadError
 
 
 class TestDownloader:
     @pytest.mark.asyncio
     async def test_returns_path_duration_title(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 
@@ -35,7 +33,7 @@ class TestDownloader:
 
     @pytest.mark.asyncio
     async def test_title_fallback_untitled(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 
@@ -54,7 +52,7 @@ class TestDownloader:
 
     @pytest.mark.asyncio
     async def test_raises_download_error(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
 
         def fake_download(url, opts):
@@ -67,7 +65,7 @@ class TestDownloader:
 
     @pytest.mark.asyncio
     async def test_unique_suffix_in_filename(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 
@@ -88,7 +86,7 @@ class TestDownloader:
 
     @pytest.mark.asyncio
     async def test_noplaylist_option_is_set(self, tmp_path, monkeypatch):
-        import app.downloader as mod
+        import app.services.downloader as mod
         monkeypatch.setattr(mod.settings, "temp_dir", str(tmp_path))
         monkeypatch.setattr(mod.settings, "audio_format", "mp3")
 

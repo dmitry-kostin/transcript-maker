@@ -117,7 +117,7 @@ def _transition(
     record_id: str,
     status: str,
     *,
-    body: str = "",
+    body: str | None = None,
     error: str = "",
     model: str | None = None,
     duration_limit: int | None = None,
@@ -125,8 +125,12 @@ def _transition(
     """Move a record to a new status, rewriting its frontmatter. Returns True if written.
 
     The one place that rebuilds the full meta dict, so every status change keeps all
-    fields in the canonical order. ``model`` / ``duration_limit`` keep their stored
-    value unless given.
+    fields in the canonical order. ``body`` / ``model`` / ``duration_limit`` keep their
+    stored value unless given — so a re-transcription that fails or is interrupted
+    leaves the previous transcript in the file; only a successful one replaces it.
+
+    A record that is already in progress cannot be put in progress again: that is
+    how two concurrent re-transcriptions of one record are kept apart.
     """
     path = _resolve_path(record_id)
     if not path:
@@ -135,7 +139,11 @@ def _transition(
     parsed = _parse_md(path)
     if not parsed:
         return False
+    if status == STATUS_IN_PROGRESS and parsed["status"] == STATUS_IN_PROGRESS:
+        logger.warning("Record %s is already in progress", record_id)
+        return False
 
+    body = parsed["body"] if body is None else body
     meta = {
         "title": parsed["title"],
         "url": parsed["url"],
@@ -174,8 +182,12 @@ def get_record(record_id: str) -> dict | None:
     return parsed
 
 
-def reset_record(record_id: str, model: str = "", duration_limit: int | None = None) -> bool:
-    """Reset an existing record back to in_progress with a new model. Returns True if written."""
+def reset_record(record_id: str, model: str | None = None, duration_limit: int | None = None) -> bool:
+    """Put a finished or failed record back in progress for a re-transcription.
+
+    ``model`` / ``duration_limit`` replace the stored values when given. Returns False
+    when the record is missing or something is already working on it.
+    """
     return _transition(record_id, STATUS_IN_PROGRESS, model=model, duration_limit=duration_limit)
 
 
@@ -369,11 +381,35 @@ def delete_chunk_cache(record_id: str) -> None:
     _chunk_cache_path(record_id).unlink(missing_ok=True)
 
 
+def _last_activity(record_id: str, path: Path) -> float:
+    """When a record was last worked on: its own mtime, or its chunk cache's if newer.
+
+    The record file is only written at status changes; the chunk cache is rewritten
+    after every chunk, so it is the heartbeat of a long multi-chunk transcription.
+    """
+    latest = path.stat().st_mtime
+    try:
+        latest = max(latest, _chunk_cache_path(record_id).stat().st_mtime)
+    except OSError:
+        pass
+    return latest
+
+
+def has_in_progress_records() -> bool:
+    """True while any record is being transcribed."""
+    RESULTS_DIR.mkdir(exist_ok=True)
+    for path in RESULTS_DIR.glob("*.md"):
+        parsed = _parse_md(path)
+        if parsed and parsed["status"] == STATUS_IN_PROGRESS:
+            return True
+    return False
+
+
 def fail_stale_records(reason: str, older_than_seconds: float = 0) -> int:
     """Fail in_progress records that nothing is working on any more. Returns how many.
 
-    With ``older_than_seconds`` only records untouched for that long are failed;
-    with 0 every in_progress record is.
+    With ``older_than_seconds`` only records with no activity for that long are
+    failed; with 0 every in_progress record is.
     """
     RESULTS_DIR.mkdir(exist_ok=True)
     now = time.time()
@@ -382,17 +418,12 @@ def fail_stale_records(reason: str, older_than_seconds: float = 0) -> int:
         parsed = _parse_md(path)
         if not parsed or parsed["status"] != STATUS_IN_PROGRESS:
             continue
-        if older_than_seconds and now - path.stat().st_mtime <= older_than_seconds:
+        if older_than_seconds and now - _last_activity(parsed["id"], path) <= older_than_seconds:
             continue
         if fail_record(parsed["id"], reason):
             failed += 1
             logger.warning("Cleaned up stale record: %s", parsed["id"])
     return failed
-
-
-def cleanup_stale_records() -> None:
-    """Mark any in_progress records as failed (stale from prior crash)."""
-    fail_stale_records("Server restarted during transcription")
 
 
 def _resolve_path(record_id: str) -> Path | None:

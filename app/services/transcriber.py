@@ -3,11 +3,12 @@ import base64
 import json
 import logging
 import subprocess
+import time
 from pathlib import Path
 
-from app.clients import get_client
 from app.config import settings
-from app.model_policy import is_gemini_model, resolve_model  # noqa: F401 — re-exported
+from app.domain.model_policy import TRANSCRIBE_VIA_CHAT, provider_for
+from app.services.clients import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -96,16 +97,17 @@ def prepare_chunks(audio_path: Path, duration_limit: int | None = None) -> list[
     return chunks
 
 
-async def transcribe_chunk(chunk_path: Path, model: str = "") -> str:
-    """Send a single audio chunk to the transcription API and return the text."""
-    actual_model = model or settings.transcribe_model
+async def transcribe_chunk(chunk_path: Path, model: str) -> str:
+    """Send a single audio chunk to the transcription API and return the text.
 
+    ``model`` is an already-resolved model name (see ``resolve_model``).
+    """
     chunk_size_mb = chunk_path.stat().st_size / (1024 * 1024)
-    logger.info("Transcribing %s (%.1f MB) with %s", chunk_path.name, chunk_size_mb, actual_model)
+    logger.info("Transcribing %s (%.1f MB) with %s", chunk_path.name, chunk_size_mb, model)
 
-    if is_gemini_model(actual_model):
-        return await _transcribe_gemini(chunk_path, actual_model)
-    return await _transcribe_base(chunk_path, actual_model)
+    if provider_for(model).transcribe_via == TRANSCRIBE_VIA_CHAT:
+        return await _transcribe_gemini(chunk_path, model)
+    return await _transcribe_base(chunk_path, model)
 
 
 async def _transcribe_base(chunk_path: Path, model: str) -> str:
@@ -179,16 +181,24 @@ async def _transcribe_gemini(chunk_path: Path, model: str) -> str:
     raise RuntimeError(f"Gemini returned empty content for {chunk_path.name} after {MAX_GEMINI_RETRIES} attempts")
 
 
-def purge_temp_dir() -> int:
-    """Delete every file directly inside tmp/ (not subdirectories). Returns how many."""
+def purge_temp_dir(older_than_seconds: float = 0) -> int:
+    """Delete files directly inside tmp/ (not subdirectories). Returns how many.
+
+    With ``older_than_seconds`` only files untouched for that long are deleted, so
+    a download that is still being written survives.
+    """
     temp_dir = Path(settings.temp_dir)
     if not temp_dir.is_dir():
         return 0
+    now = time.time()
     deleted = 0
     for f in temp_dir.iterdir():
-        if f.is_file() and f.resolve().parent == temp_dir.resolve():
-            f.unlink(missing_ok=True)
-            deleted += 1
+        if not f.is_file() or f.resolve().parent != temp_dir.resolve():
+            continue
+        if older_than_seconds and now - f.stat().st_mtime <= older_than_seconds:
+            continue
+        f.unlink(missing_ok=True)
+        deleted += 1
     return deleted
 
 
