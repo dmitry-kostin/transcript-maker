@@ -25,7 +25,6 @@
 **Transcription**
 - **YouTube → transcript** — paste a URL, get a full text via OpenAI Whisper or Google Gemini (switch providers in the UI)
 - **AI summarization** — custom or default prompt, stored alongside the transcript
-- **Speaker diarization** — optional speaker labels (`A:`, `B:`)
 - **Duration limit** — transcribe only the first N minutes of a video
 
 **Reliability**
@@ -115,12 +114,14 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `TM_LOG_FILE` | `./logs/app.log` | Rotating log file mirroring console output (empty string disables) |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
-| `TM_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | Default transcription model (supports `gemini-*`) |
-| `TM_SUMMARIZE_MODEL` | `gpt-4o` | Default summarization model (supports `gemini-*`) |
-| `TM_OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | OpenAI transcription model for provider selector |
-| `TM_OPENAI_SUMMARIZE_MODEL` | `gpt-4o` | OpenAI summarization model for provider selector |
-| `TM_GEMINI_TRANSCRIBE_MODEL` | `gemini-3-flash-preview` | Gemini transcription model for provider selector |
-| `TM_GEMINI_SUMMARIZE_MODEL` | `gemini-3-flash-preview` | Gemini summarization model for provider selector |
+| `TM_TRANSCRIBE_MODEL` | `gpt-transcribe` | Default transcription model (supports `gemini-*`) |
+| `TM_SUMMARIZE_MODEL` | `gpt-6-luna` | Default summarization model (supports `gemini-*`) |
+| `TM_OPENAI_TRANSCRIBE_MODEL` | `gpt-transcribe` | OpenAI transcription model for provider selector |
+| `TM_OPENAI_SUMMARIZE_MODEL` | `gpt-6-luna` | OpenAI summarization model for provider selector |
+| `TM_GEMINI_TRANSCRIBE_MODEL` | `gemini-3.5-transcribe` | Gemini transcription model for provider selector |
+| `TM_GEMINI_SUMMARIZE_MODEL` | `gemini-3.8-flash` | Gemini summarization model for provider selector |
+| `TM_API_TIMEOUT_SECONDS` | `180` | Give up on a single OpenAI/Gemini request after this long |
+| `TM_API_MAX_RETRIES` | `1` | Automatic retries per request on timeouts and transient errors |
 
 ## Project Structure
 
@@ -134,8 +135,10 @@ transcript-maker/
 │   ├── __init__.py
 │   ├── main.py             # FastAPI app factory, logging setup, startup log
 │   ├── config.py           # pydantic-settings (env vars)
-│   ├── api.py              # API routes (transcribe + history endpoints)
-│   ├── clients.py          # Shared OpenAI/Gemini client helpers
+│   ├── api.py              # HTTP only: request validation, routes, SSE serialization
+│   ├── pipeline.py         # Transcription use case (download → chunk → transcribe → save)
+│   ├── model_policy.py     # Model naming + provider rules (pure, no I/O)
+│   ├── clients.py          # OpenAI/Gemini API clients
 │   ├── downloader.py       # yt-dlp: download + extract audio
 │   ├── transcriber.py      # ffmpeg chunking + OpenAI/Gemini transcription
 │   ├── summarizer.py       # Chat Completions for summarization (OpenAI + Gemini)
@@ -152,6 +155,7 @@ transcript-maker/
 │   ├── test_summarizer.py  # Summarizer unit tests
 │   ├── test_validation.py  # URL validation tests
 │   ├── test_api_endpoints.py # API endpoint tests (TestClient)
+│   ├── test_pipeline.py    # Transcription use case tests (all I/O mocked)
 │   └── test_integration.py # End-to-end tests (real APIs)
 ├── tmp/                    # Runtime temp files (gitignored)
 └── results/                # Saved transcripts as .md files (gitignored)
@@ -183,15 +187,13 @@ transcript-maker/
 ```json
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "model": "gpt-4o-transcribe",
-  "diarize": true,
+  "model": "gpt-transcribe",
   "duration_limit": 30
 }
 ```
 
 - `url` — YouTube video URL (required)
-- `model` — Transcription model (optional, default `gpt-4o-transcribe`). Supports OpenAI models (`gpt-4o-transcribe`) and Gemini models (`gemini-*`).
-- `diarize` — Enable speaker detection (optional, default `false`). Appends `-diarize` suffix to the stored model name.
+- `model` — Transcription model (optional, default `gpt-transcribe`). Supports OpenAI models (`gpt-transcribe`) and Gemini models (`gemini-*`).
 - `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`). Converted to seconds internally.
 
 Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs or playlist URLs.
@@ -212,14 +214,12 @@ Re-transcribes an existing record using its stored URL. Returns an SSE stream id
 **Request:**
 ```json
 {
-  "model": "gpt-4o-transcribe",
-  "diarize": false,
+  "model": "gpt-transcribe",
   "duration_limit": 0
 }
 ```
 
 - `model` — Transcription model (optional, same as `/api/transcribe`)
-- `diarize` — Enable speaker detection (optional, default `false`)
 - `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`)
 
 Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
@@ -230,7 +230,7 @@ Generate an AI summary for a completed transcript.
 
 **Request:**
 ```json
-{ "prompt": "Summarize the key points", "model": "gpt-4o" }
+{ "prompt": "Summarize the key points", "model": "gpt-6-luna" }
 ```
 
 - `prompt` — Custom summarization prompt (optional, empty string uses default prompt)
@@ -272,14 +272,14 @@ Returns available model providers based on which API keys are configured.
     {
       "id": "openai",
       "label": "OpenAI",
-      "transcribe_model": "gpt-4o-transcribe",
-      "summarize_model": "gpt-4o"
+      "transcribe_model": "gpt-transcribe",
+      "summarize_model": "gpt-6-luna"
     },
     {
       "id": "gemini",
       "label": "Gemini",
-      "transcribe_model": "gemini-3-flash-preview",
-      "summarize_model": "gemini-3-flash-preview"
+      "transcribe_model": "gemini-3.5-transcribe",
+      "summarize_model": "gemini-3.8-flash"
     }
   ]
 }
@@ -299,7 +299,7 @@ Each provider only appears if its API key is configured (`TM_OPENAI_API_KEY` for
     "status": "done",
     "duration": 213,
     "duration_limit": 0,
-    "model": "gpt-4o-transcribe-diarize",
+    "model": "gpt-transcribe",
     "words": 1842,
     "created_at": "2026-02-19T10:30:00",
     "error": "",
@@ -337,7 +337,7 @@ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 status: "done"
 duration: 213
 duration_limit: 0
-model: "gpt-4o-transcribe-diarize"
+model: "gpt-transcribe"
 words: 1842
 created_at: "2026-02-19T10:30:00"
 error: ""
@@ -355,7 +355,7 @@ Video title is prepended as the first line of both the transcript body and summa
 
 **Audio cache:** `{record_id}.mp3` — cached audio file, reused by retranscribe. Deleted automatically when the parent record is deleted.
 
-**Chunk cache:** `{record_id}_chunks.json` — stores completed chunk transcriptions as JSON for resume. Cache key is a SHA256 hash of model + diarize + chunk count; invalidated when any parameter changes. Deleted on successful completion or when the parent record is deleted.
+**Chunk cache:** `{record_id}_chunks.json` — stores completed chunk transcriptions as JSON for resume. Cache key is a SHA256 hash of model + chunk count; invalidated when any parameter changes. Deleted on successful completion or when the parent record is deleted.
 
 **Status lifecycle:** `in_progress` → `done` | `error`
 

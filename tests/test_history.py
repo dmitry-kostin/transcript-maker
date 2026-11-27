@@ -1,4 +1,6 @@
 from pathlib import Path
+
+import pytest
 from app.history import (
     _slugify, _write_md, _parse_md,
     create_record, complete_record, fail_record,
@@ -441,34 +443,29 @@ class TestChunkCache:
     def test_save_and_load(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
         parts = ["chunk 0 text", "chunk 1 text"]
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, parts)
-        loaded = load_chunk_cache(rid, "gemini-3-flash-preview", False, 5)
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, parts)
+        loaded = load_chunk_cache(rid, "gemini-3-flash-preview", 5)
         assert loaded == parts
 
     def test_load_missing_returns_empty(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", 5) == []
 
     def test_invalidated_by_model_change(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
-        assert load_chunk_cache(rid, "gpt-4o-transcribe", False, 5) == []
-
-    def test_invalidated_by_diarize_change(self, tmp_results):
-        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
-        assert load_chunk_cache(rid, "gemini-3-flash-preview", True, 5) == []
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, ["chunk 0"])
+        assert load_chunk_cache(rid, "gpt-4o-transcribe", 5) == []
 
     def test_invalidated_by_total_change(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
-        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 3) == []
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, ["chunk 0"])
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", 3) == []
 
     def test_delete(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, ["chunk 0"])
         delete_chunk_cache(rid)
-        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", 5) == []
 
     def test_delete_nonexistent_is_safe(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
@@ -479,13 +476,13 @@ class TestChunkCache:
 
     def test_delete_record_cascades_to_chunk_cache(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, ["chunk 0"])
         delete_record(rid)
-        assert load_chunk_cache(rid, "gemini-3-flash-preview", False, 5) == []
+        assert load_chunk_cache(rid, "gemini-3-flash-preview", 5) == []
 
     def test_chunk_cache_not_in_history_glob(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "gemini-3-flash-preview", False, 5, ["chunk 0"])
+        save_chunk_cache(rid, "gemini-3-flash-preview", 5, ["chunk 0"])
         records = get_history()
         assert len(records) == 1
         assert records[0]["id"] == rid
@@ -493,14 +490,68 @@ class TestChunkCache:
     def test_incremental_save(self, tmp_results):
         """Simulate saving after each chunk completes."""
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
-        save_chunk_cache(rid, "model", False, 3, ["part0"])
-        save_chunk_cache(rid, "model", False, 3, ["part0", "part1"])
-        save_chunk_cache(rid, "model", False, 3, ["part0", "part1", "part2"])
-        loaded = load_chunk_cache(rid, "model", False, 3)
+        save_chunk_cache(rid, "model", 3, ["part0"])
+        save_chunk_cache(rid, "model", 3, ["part0", "part1"])
+        save_chunk_cache(rid, "model", 3, ["part0", "part1", "part2"])
+        loaded = load_chunk_cache(rid, "model", 3)
         assert loaded == ["part0", "part1", "part2"]
 
     def test_corrupt_json_returns_empty(self, tmp_results):
         rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60)
         cache_path = tmp_results / f"{rid}_chunks.json"
         cache_path.write_text("not valid json", encoding="utf-8")
-        assert load_chunk_cache(rid, "model", False, 5) == []
+        assert load_chunk_cache(rid, "model", 5) == []
+
+
+class TestStaleRecords:
+    def test_only_in_progress_records_are_failed(self, tmp_results):
+        from app.history import fail_stale_records
+        stuck = create_record("Stuck", "https://youtube.com/watch?v=a", 60)
+        done = create_record("Done", "https://youtube.com/watch?v=b", 60)
+        complete_record(done, "text")
+        assert fail_stale_records("gone") == 1
+        assert get_record(stuck)["status"] == "error"
+        assert get_record(stuck)["error"] == "gone"
+        assert get_record(done)["status"] == "done"
+
+    def test_recent_records_survive_an_age_threshold(self, tmp_results):
+        import os, time
+        from app.history import fail_stale_records, get_result_path
+        fresh = create_record("Fresh", "https://youtube.com/watch?v=a", 60)
+        old = create_record("Old", "https://youtube.com/watch?v=b", 60)
+        an_hour_ago = time.time() - 3600
+        os.utime(get_result_path(old), (an_hour_ago, an_hour_ago))
+        assert fail_stale_records("stale", older_than_seconds=600) == 1
+        assert get_record(old)["status"] == "error"
+        assert get_record(fresh)["status"] == "in_progress"
+
+
+class TestRecordId:
+    @pytest.mark.parametrize("value,ok", [
+        ("0a1b2c3d", True), ("0A1B2C3D", False), ("0a1b2c3", False),
+        ("0a1b2c3d4", False), ("../../ab", False), ("", False),
+    ])
+    def test_is_valid_record_id(self, value, ok):
+        from app.history import is_valid_record_id
+        assert is_valid_record_id(value) is ok
+
+
+class TestFrontmatterOrder:
+    """Every status change must rewrite all fields in the canonical order."""
+
+    def _keys(self, rid: str) -> list[str]:
+        import yaml
+        from app.history import get_result_path
+        text = get_result_path(rid).read_text()
+        return list(yaml.safe_load(text.split("---", 2)[1]).keys())
+
+    def test_order_through_the_lifecycle(self, tmp_results):
+        base = ["title", "url", "status", "duration", "duration_limit", "model", "created_at", "error"]
+        rid = create_record("Vid", "https://youtube.com/watch?v=abc", 60, model="m")
+        assert self._keys(rid) == base
+        complete_record(rid, "one two")
+        assert self._keys(rid) == base[:6] + ["words"] + base[6:]
+        fail_record(rid, "x")
+        assert self._keys(rid) == base
+        reset_record(rid, model="m2")
+        assert self._keys(rid) == base

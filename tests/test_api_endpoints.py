@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.history import create_record, complete_record, get_record, get_summary, RESULTS_DIR
-from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS, get_stored_model, resolve_model
+from app.transcriber import prepare_chunks, MAX_CHUNK_DURATION_SECONDS
 import app.history as history_mod
 
 
@@ -194,28 +194,6 @@ class TestSummarizeEndpoint:
         assert client.get(f"/api/history/{rid}/summary").status_code == 404
 
 
-class TestModelStorage:
-    def test_openai_diarize_model_stored(self, tmp_path, monkeypatch):
-        results_dir = tmp_path / "results"
-        results_dir.mkdir()
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        stored = get_stored_model("", diarize=True)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60, model=stored)
-        rec = get_record(rid)
-        assert rec["model"] == "gpt-4o-transcribe-diarize"
-
-    def test_gemini_diarize_model_stored(self, tmp_path, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        results_dir = tmp_path / "results"
-        results_dir.mkdir()
-        monkeypatch.setattr(history_mod, "RESULTS_DIR", results_dir)
-        stored = get_stored_model("", diarize=True)
-        rid = create_record("Test", "https://youtube.com/watch?v=abc", 60, model=stored)
-        rec = get_record(rid)
-        assert rec["model"] == "gemini-3-flash-preview-diarize"
-
-
 class TestPrepareChunks:
     def test_small_file_short_duration_no_chunking(self, tmp_path):
         """File under size AND duration limits → no chunking."""
@@ -325,23 +303,12 @@ class TestDurationLimitParam:
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", duration_limit=0)
         assert req.duration_limit == 0
 
-    def test_transcribe_accepts_diarize_param(self):
-        """diarize boolean is accepted by the API model (Issue #1)."""
-        from app.api import TranscribeRequest
+    def test_legacy_diarize_field_is_ignored(self):
+        """Speaker detection was removed; old clients still sending the flag don't break."""
+        from app.api import TranscribeRequest, RetranscribeRequest
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", diarize=True)
-        assert req.diarize is True
-
-    def test_diarize_defaults_false(self):
-        """diarize defaults to False when not specified."""
-        from app.api import TranscribeRequest
-        req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz")
-        assert req.diarize is False
-
-    def test_retranscribe_accepts_diarize_param(self):
-        """RetranscribeRequest also accepts diarize."""
-        from app.api import RetranscribeRequest
-        req = RetranscribeRequest(diarize=True, duration_limit=5)
-        assert req.diarize is True
+        assert not hasattr(req, "diarize")
+        assert RetranscribeRequest(diarize=True, duration_limit=5).duration_limit == 5
 
 
 class TestProvidersEndpoint:
@@ -420,37 +387,3 @@ class TestProvidersEndpoint:
             res = client.post(f"/api/history/{rid}/summarize", json={"prompt": "Custom", "model": "gemini-2.0-flash"})
         assert res.status_code == 200
         mock_fn.assert_called_once_with("Transcript text", "Custom", model="gemini-2.0-flash")
-
-
-class TestFrontendModelResolution:
-    """Verify the frontend's diarize=true resolves correctly through resolve_model (Issue #20)."""
-
-    def test_diarize_true_resolves_with_openai_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        model, diarize = resolve_model("", diarize=True)
-        assert model == "gpt-4o-transcribe"
-        assert diarize is True
-
-    def test_diarize_true_resolves_with_gemini_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-2.0-flash")
-        model, diarize = resolve_model("", diarize=True)
-        assert model == "gemini-2.0-flash"
-        assert diarize is True
-
-    def test_diarize_false_with_empty_model(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        model, diarize = resolve_model("", diarize=False)
-        assert model == "gpt-4o-transcribe"
-        assert diarize is False
-
-    def test_stored_model_matches_resolved(self, monkeypatch):
-        """Storage and execution use the same resolved model (Issue #3)."""
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-2.0-flash")
-        actual_model, diarize = resolve_model("", diarize=True)
-        stored = get_stored_model("", diarize=True)
-        assert stored == f"{actual_model}-diarize"
-        assert actual_model == "gemini-2.0-flash"

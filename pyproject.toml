@@ -9,22 +9,23 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.141"
-uvicorn = {extras = ["standard"], version = "^0.52"}
-yt-dlp = ">=2026.8.19"
-openai = "^2.52"
-pydantic-settings = "^2.14"
-sse-starlette = "^3.4"
-pyyaml = "^6.0"
+fastapi = "^0.165"
+uvicorn = {extras = ["standard"], version = "^0.54"}
+yt-dlp = ">=2026.11.23"
+openai = "^3.60"
+pydantic-settings = "^2.16"
+sse-starlette = "^3.7"
+pyyaml = "^6.0.4"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^9.1"
-pytest-asyncio = "^1.4"
-httpx = "^0.28"
-json-repair = "^0.61"
+pytest = "^9.2"
+pytest-asyncio = "^1.5"
+httpx = "^0.29"
+json-repair = "^0.64"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: end-to-end tests using real YouTube download and OpenAI/Gemini APIs (deselected by default, run with -m integration)",
 ]

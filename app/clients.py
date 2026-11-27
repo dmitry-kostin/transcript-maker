@@ -3,15 +3,11 @@ import logging
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.model_policy import is_gemini_model
 
 logger = logging.getLogger(__name__)
 
 GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-
-def is_gemini_model(model: str) -> bool:
-    """Check if a model name is a Gemini model."""
-    return model.startswith("gemini-")
 
 
 def get_client(model: str) -> AsyncOpenAI:
@@ -24,9 +20,15 @@ def get_client(model: str) -> AsyncOpenAI:
         return AsyncOpenAI(
             api_key=settings.google_api_key,
             base_url=GOOGLE_BASE_URL,
+            timeout=settings.api_timeout_seconds,
+            max_retries=settings.api_max_retries,
         )
     if not settings.openai_api_key:
         raise ValueError(
             "TM_OPENAI_API_KEY env var is required when using an OpenAI model"
         )
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+    return AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.api_timeout_seconds,
+        max_retries=settings.api_max_retries,
+    )

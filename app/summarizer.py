@@ -2,6 +2,7 @@ import logging
 
 from app.clients import get_client
 from app.config import settings
+from app.model_policy import is_gemini_model
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,15 @@ async def summarize_text(text: str, prompt: str = "", model: str = "") -> str:
     model = model or settings.summarize_model
     client = get_client(model)
     logger.info("Summarizing %d chars with model %s", len(text), model)
+    # OpenAI's GPT-6 models reject any non-default temperature
+    extra = {"temperature": 0.3} if is_gemini_model(model) else {}
     response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_MESSAGE},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.3,
+        **extra,
     )
     finish_reason = response.choices[0].finish_reason if response.choices else "no_choices"
     content = response.choices[0].message.content if response.choices else None

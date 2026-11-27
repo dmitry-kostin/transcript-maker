@@ -79,6 +79,25 @@ class TestSummarizeText:
             await summarize_text("Text", prompt="")
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs
         assert call_kwargs["model"] == "gemini-3-flash-preview"
+        assert call_kwargs["temperature"] == 0.3
+
+    @pytest.mark.asyncio
+    async def test_openai_omits_temperature(self, monkeypatch):
+        import app.summarizer as mod
+        monkeypatch.setattr(mod.settings, "summarize_model", "gpt-6-luna")
+        mock_msg = MagicMock()
+        mock_msg.content = "Summary"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        with patch("app.summarizer.get_client", return_value=mock_client):
+            await summarize_text("Text", prompt="")
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-6-luna"
+        assert "temperature" not in call_kwargs
 
 
 class TestSummarizeModelOverride:

@@ -3,45 +3,17 @@ import base64
 import json
 import logging
 import subprocess
-import warnings
 from pathlib import Path
 
-from app.clients import is_gemini_model, get_client
+from app.clients import get_client
 from app.config import settings
+from app.model_policy import is_gemini_model, resolve_model  # noqa: F401 — re-exported
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_SIZE_MB = 25.0
 MAX_GEMINI_RETRIES = 3
 MAX_CHUNK_DURATION_SECONDS = 600  # Whisper silently truncates output on long chunks; 10min keeps output well within token limits
-
-
-def resolve_model(requested: str, diarize: bool = False) -> tuple[str, bool]:
-    """Resolve a requested model string into (actual_model, diarize_flag).
-
-    - "" → (settings.transcribe_model, diarize)
-    - anything ending in "-diarize" → (base_model, True)
-    - explicit model name → (that_model, diarize)
-    """
-    if not requested:
-        return settings.transcribe_model, diarize
-    if requested.endswith("-diarize"):
-        base = requested.removesuffix("-diarize")
-        return base or settings.transcribe_model, True
-    return requested, diarize
-
-
-def get_stored_model(requested: str, diarize: bool = False) -> str:
-    """Return the model name to store in records.
-
-    Appends '-diarize' suffix when diarize is detected.
-    E.g. ("", True) with TM_TRANSCRIBE_MODEL=gemini-2.0-flash → "gemini-2.0-flash-diarize"
-         ("gpt-4o-transcribe-diarize", False) → "gpt-4o-transcribe-diarize"
-    """
-    model, should_diarize = resolve_model(requested, diarize)
-    if should_diarize:
-        return f"{model}-diarize"
-    return model
 
 
 def _get_duration(audio_path: Path) -> float:
@@ -124,18 +96,15 @@ def prepare_chunks(audio_path: Path, duration_limit: int | None = None) -> list[
     return chunks
 
 
-async def transcribe_chunk(chunk_path: Path, model: str = "", diarize: bool = False) -> str:
+async def transcribe_chunk(chunk_path: Path, model: str = "") -> str:
     """Send a single audio chunk to the transcription API and return the text."""
     actual_model = model or settings.transcribe_model
 
     chunk_size_mb = chunk_path.stat().st_size / (1024 * 1024)
-    logger.info("Transcribing %s (%.1f MB) with %s (diarize=%s)", chunk_path.name, chunk_size_mb, actual_model, diarize)
+    logger.info("Transcribing %s (%.1f MB) with %s", chunk_path.name, chunk_size_mb, actual_model)
 
     if is_gemini_model(actual_model):
-        return await _transcribe_gemini(chunk_path, actual_model, diarize)
-
-    if diarize:
-        return await _transcribe_diarize(chunk_path, f"{actual_model}-diarize")
+        return await _transcribe_gemini(chunk_path, actual_model)
     return await _transcribe_base(chunk_path, actual_model)
 
 
@@ -156,55 +125,16 @@ async def _transcribe_base(chunk_path: Path, model: str) -> str:
     return text
 
 
-async def _transcribe_diarize(chunk_path: Path, model: str) -> str:
-    """Transcribe with diarization — returns 'Speaker: text' lines."""
-    client = get_client(model)
-    with open(chunk_path, "rb") as f:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Unexpected audio response format")
-            response = await client.audio.transcriptions.create(
-                model=model,
-                file=f,
-                response_format="diarized_json",
-                chunking_strategy="auto",
-            )
-    if not response or not hasattr(response, "segments"):
-        logger.error("Diarize API returned unexpected response for %s (model=%s, response=%r)", chunk_path.name, model, response)
-        return ""
-    segments = response.segments or []
-    logger.info("Diarize response for %s: %d segments, finish_reason=%s", chunk_path.name, len(segments), getattr(response, "finish_reason", "n/a"))
-    lines = []
-    for seg in segments:
-        s = seg if isinstance(seg, dict) else seg.__dict__
-        speaker = s.get("speaker") or "Unknown"
-        seg_text = s.get("text", "").strip()
-        if seg_text:
-            lines.append(f"{speaker}: {seg_text}")
-    text = "\n".join(lines) if lines else response.text or ""
-    if not text:
-        logger.error("Diarize produced no text for %s (segments=%d, fallback_text=%r)", chunk_path.name, len(segments), response.text)
-    else:
-        logger.info("Transcribed %s: %d words, %d chars (diarized, %d segments)", chunk_path.name, len(text.split()), len(text), len(segments))
-    return text
-
-
-async def _transcribe_gemini(chunk_path: Path, model: str, diarize: bool) -> str:
+async def _transcribe_gemini(chunk_path: Path, model: str) -> str:
     """Transcribe audio using Gemini via the OpenAI-compatible chat endpoint."""
     client = get_client(model)
 
     audio_data = base64.b64encode(chunk_path.read_bytes()).decode("utf-8")
 
-    if diarize:
-        prompt = (
-            "Transcribe this audio. Identify different speakers and "
-            "format each line as 'A: text', 'B: text', etc. where each letter is a different speaker. "
-            "Do not use any other formatting — no markdown, no bold, no headers."
-        )
-    else:
-        prompt = (
-            "Transcribe this audio verbatim as a single continuous block of plain text. "
-            "Do not add speaker labels, headings, markdown formatting, or line breaks between sentences."
-        )
+    prompt = (
+        "Transcribe this audio verbatim as a single continuous block of plain text. "
+        "Do not add speaker labels, headings, markdown formatting, or line breaks between sentences."
+    )
 
     for attempt in range(1, MAX_GEMINI_RETRIES + 1):
         response = await client.chat.completions.create(
@@ -233,8 +163,8 @@ async def _transcribe_gemini(chunk_path: Path, model: str, diarize: bool) -> str
 
         if content:
             text = content.strip()
-            logger.info("Transcribed %s via Gemini: %d words, %d chars (diarize=%s, finish_reason=%s, usage=%s)",
-                        chunk_path.name, len(text.split()), len(text), diarize, finish_reason, usage_str)
+            logger.info("Transcribed %s via Gemini: %d words, %d chars (finish_reason=%s, usage=%s)",
+                        chunk_path.name, len(text.split()), len(text), finish_reason, usage_str)
             if finish_reason != "stop":
                 logger.warning("Gemini finish_reason=%s for %s (may be truncated)", finish_reason, chunk_path.name)
             return text
@@ -247,6 +177,19 @@ async def _transcribe_gemini(chunk_path: Path, model: str, diarize: bool) -> str
             await asyncio.sleep(2 ** (attempt - 1))
 
     raise RuntimeError(f"Gemini returned empty content for {chunk_path.name} after {MAX_GEMINI_RETRIES} attempts")
+
+
+def purge_temp_dir() -> int:
+    """Delete every file directly inside tmp/ (not subdirectories). Returns how many."""
+    temp_dir = Path(settings.temp_dir)
+    if not temp_dir.is_dir():
+        return 0
+    deleted = 0
+    for f in temp_dir.iterdir():
+        if f.is_file() and f.resolve().parent == temp_dir.resolve():
+            f.unlink(missing_ok=True)
+            deleted += 1
+    return deleted
 
 
 def cleanup_temp_files(audio_path: Path) -> None:

@@ -5,8 +5,8 @@ import pytest
 from app.clients import is_gemini_model, get_client
 from app.transcriber import (
     prepare_chunks, cleanup_temp_files, MAX_UPLOAD_SIZE_MB,
-    resolve_model, get_stored_model,
-    transcribe_chunk, _transcribe_base, _transcribe_diarize, _transcribe_gemini,
+    resolve_model,
+    transcribe_chunk, _transcribe_base, _transcribe_gemini,
 )
 
 
@@ -163,92 +163,27 @@ class TestIsGeminiModel:
 class TestResolveModel:
     def test_empty_uses_default(self, monkeypatch):
         import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert resolve_model("") == ("gpt-4o-transcribe", False)
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-transcribe")
+        assert resolve_model("") == "gpt-transcribe"
 
-    def test_empty_uses_gemini_default(self, monkeypatch):
+    def test_empty_uses_default_gemini(self, monkeypatch):
         import app.transcriber as mod
         monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert resolve_model("") == ("gemini-3-flash-preview", False)
-
-    def test_diarize_suffix_extracts_base_model(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert resolve_model("gpt-4o-transcribe-diarize") == ("gpt-4o-transcribe", True)
-
-    def test_diarize_suffix_preserves_explicit_model(self, monkeypatch):
-        """With Gemini default, explicit OpenAI-diarize preserves the explicit model."""
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert resolve_model("gpt-4o-transcribe-diarize") == ("gpt-4o-transcribe", True)
-
-    def test_gemini_diarize_suffix(self):
-        assert resolve_model("gemini-2.0-flash-diarize") == ("gemini-2.0-flash", True)
+        assert resolve_model("") == "gemini-3-flash-preview"
 
     def test_explicit_model(self):
-        assert resolve_model("gpt-4o-transcribe") == ("gpt-4o-transcribe", False)
+        assert resolve_model("gpt-transcribe") == "gpt-transcribe"
+        assert resolve_model("gemini-3-flash-preview") == "gemini-3-flash-preview"
 
-    def test_explicit_gemini(self):
-        assert resolve_model("gemini-3-flash-preview") == ("gemini-3-flash-preview", False)
-
-    def test_diarize_param_with_empty_model(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert resolve_model("", diarize=True) == ("gpt-4o-transcribe", True)
-
-    def test_diarize_param_with_gemini_default(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-2.0-flash")
-        assert resolve_model("", diarize=True) == ("gemini-2.0-flash", True)
-
-    def test_diarize_param_with_explicit_model(self):
-        assert resolve_model("gemini-2.0-flash", diarize=True) == ("gemini-2.0-flash", True)
-
-    def test_suffix_overrides_diarize_false(self):
-        """Suffix -diarize wins even when diarize param is False."""
-        assert resolve_model("gpt-4o-transcribe-diarize", diarize=False) == ("gpt-4o-transcribe", True)
+    def test_legacy_diarize_suffix_maps_to_base_model(self):
+        """Old records carry '-diarize' model names; they resolve to the plain model."""
+        assert resolve_model("gpt-4o-transcribe-diarize") == "gpt-4o-transcribe"
+        assert resolve_model("gemini-2.0-flash-diarize") == "gemini-2.0-flash"
 
     def test_bare_diarize_suffix_uses_default(self, monkeypatch):
-        """Model string '-diarize' with empty base falls back to settings default."""
         import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert resolve_model("-diarize") == ("gpt-4o-transcribe", True)
-
-
-class TestGetStoredModel:
-    def test_empty_request_openai(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert get_stored_model("") == "gpt-4o-transcribe"
-
-    def test_empty_request_gemini(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert get_stored_model("") == "gemini-3-flash-preview"
-
-    def test_diarize_suffix_openai(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert get_stored_model("gpt-4o-transcribe-diarize") == "gpt-4o-transcribe-diarize"
-
-    def test_diarize_suffix_preserves_explicit_model(self, monkeypatch):
-        """Explicit model in suffix is preserved, not replaced by settings default."""
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert get_stored_model("gpt-4o-transcribe-diarize") == "gpt-4o-transcribe-diarize"
-
-    def test_diarize_param_openai(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        assert get_stored_model("", diarize=True) == "gpt-4o-transcribe-diarize"
-
-    def test_diarize_param_gemini(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        assert get_stored_model("", diarize=True) == "gemini-3-flash-preview-diarize"
-
-    def test_explicit_model(self):
-        assert get_stored_model("gpt-4o-transcribe") == "gpt-4o-transcribe"
+        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-transcribe")
+        assert resolve_model("-diarize") == "gpt-transcribe"
 
 
 class TestGetClient:
@@ -296,34 +231,14 @@ class TestTranscribeChunkRouting:
         assert result == "hello"
 
     @pytest.mark.asyncio
-    async def test_diarize_calls_diarize(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gpt-4o-transcribe")
-        mock = AsyncMock(return_value="Speaker 1: hi")
-        with patch("app.transcriber._transcribe_diarize", mock):
-            result = await transcribe_chunk(self.chunk, model="gpt-4o-transcribe", diarize=True)
-        mock.assert_awaited_once_with(self.chunk, "gpt-4o-transcribe-diarize")
-        assert result == "Speaker 1: hi"
-
-    @pytest.mark.asyncio
     async def test_gemini_default_calls_gemini(self, monkeypatch):
         import app.transcriber as mod
         monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
         mock = AsyncMock(return_value="gemini text")
         with patch("app.transcriber._transcribe_gemini", mock):
             result = await transcribe_chunk(self.chunk, model="gemini-3-flash-preview")
-        mock.assert_awaited_once_with(self.chunk, "gemini-3-flash-preview", False)
+        mock.assert_awaited_once_with(self.chunk, "gemini-3-flash-preview")
         assert result == "gemini text"
-
-    @pytest.mark.asyncio
-    async def test_diarize_with_gemini(self, monkeypatch):
-        import app.transcriber as mod
-        monkeypatch.setattr(mod.settings, "transcribe_model", "gemini-3-flash-preview")
-        mock = AsyncMock(return_value="Speaker 1: gemini")
-        with patch("app.transcriber._transcribe_gemini", mock):
-            result = await transcribe_chunk(self.chunk, model="gemini-3-flash-preview", diarize=True)
-        mock.assert_awaited_once_with(self.chunk, "gemini-3-flash-preview", True)
-        assert result == "Speaker 1: gemini"
 
     @pytest.mark.asyncio
     async def test_empty_model_uses_default(self, monkeypatch):
@@ -356,34 +271,32 @@ class TestTranscribeGemini:
         return mock_client
 
     @pytest.mark.asyncio
-    async def test_non_diarize_prompt(self):
+    async def test_verbatim_prompt(self):
         client = self._mock_client("Hello world")
         with patch("app.transcriber.get_client", return_value=client):
-            result = await _transcribe_gemini(self.chunk, "gemini-3-flash-preview", diarize=False)
+            result = await _transcribe_gemini(self.chunk, "gemini-3-flash-preview")
         assert result == "Hello world"
         call_kwargs = client.chat.completions.create.call_args.kwargs
         prompt_text = call_kwargs["messages"][0]["content"][0]["text"]
         assert "verbatim" in prompt_text
 
     @pytest.mark.asyncio
-    async def test_diarize_prompt(self):
-        client = self._mock_client("Speaker 1: Hi")
-        with patch("app.transcriber.get_client", return_value=client):
-            result = await _transcribe_gemini(self.chunk, "gemini-3-flash-preview", diarize=True)
-        assert result == "Speaker 1: Hi"
-        call_kwargs = client.chat.completions.create.call_args.kwargs
-        prompt_text = call_kwargs["messages"][0]["content"][0]["text"]
-        assert "'A: text'" in prompt_text
-
-    @pytest.mark.asyncio
     async def test_sends_base64_audio(self):
         client = self._mock_client("text")
         with patch("app.transcriber.get_client", return_value=client):
-            await _transcribe_gemini(self.chunk, "gemini-3-flash-preview", diarize=False)
+            await _transcribe_gemini(self.chunk, "gemini-3-flash-preview")
         call_kwargs = client.chat.completions.create.call_args.kwargs
         audio_part = call_kwargs["messages"][0]["content"][1]
         assert audio_part["type"] == "input_audio"
         assert len(audio_part["input_audio"]["data"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_sends_no_reasoning_effort(self):
+        """gemini-3.5-transcribe is not a reasoning model and rejects the parameter with a 400."""
+        client = self._mock_client("text")
+        with patch("app.transcriber.get_client", return_value=client):
+            await _transcribe_gemini(self.chunk, "gemini-3.5-transcribe")
+        assert "reasoning_effort" not in client.chat.completions.create.call_args.kwargs
 
 
 class TestTranscribeBase:
@@ -401,29 +314,6 @@ class TestTranscribeBase:
         with patch("app.transcriber.get_client", return_value=mock_client):
             result = await _transcribe_base(self.chunk, "gpt-4o-transcribe")
         assert result == "Hello world"
-
-
-class TestTranscribeDiarize:
-    """Test _transcribe_diarize with a mocked client."""
-
-    @pytest.fixture(autouse=True)
-    def _chunk(self, tmp_path):
-        self.chunk = tmp_path / "audio.mp3"
-        self.chunk.write_bytes(b"\x00" * 1024)
-
-    @pytest.mark.asyncio
-    async def test_joins_speaker_segments(self):
-        seg1 = MagicMock()
-        seg1.__dict__ = {"speaker": "Speaker 1", "text": " Hello "}
-        seg2 = MagicMock()
-        seg2.__dict__ = {"speaker": "Speaker 2", "text": " World "}
-        mock_resp = MagicMock()
-        mock_resp.segments = [seg1, seg2]
-        mock_client = MagicMock()
-        mock_client.audio.transcriptions.create = AsyncMock(return_value=mock_resp)
-        with patch("app.transcriber.get_client", return_value=mock_client):
-            result = await _transcribe_diarize(self.chunk, "gpt-4o-transcribe-diarize")
-        assert result == "Speaker 1: Hello\nSpeaker 2: World"
 
 
 class TestCleanupTempFiles:
@@ -454,3 +344,22 @@ class TestCleanupTempFiles:
 
         assert not base.exists()
         assert not trimmed.exists()
+
+
+class TestClientLimits:
+    """A stalled API call must fail in minutes, not sit for the SDK's 10-minute default."""
+
+    @pytest.mark.parametrize("model", ["gpt-transcribe", "gemini-3.5-transcribe"])
+    def test_clients_use_configured_timeout_and_retries(self, model, monkeypatch):
+        import app.clients as mod
+        monkeypatch.setattr(mod.settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(mod.settings, "google_api_key", "gk-test")
+        monkeypatch.setattr(mod.settings, "api_timeout_seconds", 42.0)
+        monkeypatch.setattr(mod.settings, "api_max_retries", 0)
+        client = get_client(model)
+        assert client.timeout == 42.0
+        assert client.max_retries == 0
+
+    def test_default_timeout_is_well_under_sdk_default(self):
+        from app.config import Settings
+        assert Settings.model_fields["api_timeout_seconds"].default <= 300

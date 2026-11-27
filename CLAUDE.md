@@ -10,13 +10,14 @@
 ## Environment
 - Requires `TM_OPENAI_API_KEY` env var or `.env` file (not needed for demo mode)
 - `GOOGLE_API_KEY` env var (no `TM_` prefix) — required when using Gemini models
-- `TM_SUMMARIZE_MODEL` env var (default: `gpt-4o`) — model used for AI summarization (supports `gemini-*` models)
-- `TM_TRANSCRIBE_MODEL` env var (default: `gpt-4o-transcribe`) — model used for transcription (supports `gemini-*` models)
+- `TM_SUMMARIZE_MODEL` env var (default: `gpt-6-luna`) — model used for AI summarization (supports `gemini-*` models)
+- `TM_TRANSCRIBE_MODEL` env var (default: `gpt-transcribe`) — model used for transcription (supports `gemini-*` models)
 - Per-provider model defaults (used by provider selector when switching providers):
-  - `TM_OPENAI_TRANSCRIBE_MODEL` (default: `gpt-4o-transcribe`)
-  - `TM_OPENAI_SUMMARIZE_MODEL` (default: `gpt-4o`)
-  - `TM_GEMINI_TRANSCRIBE_MODEL` (default: `gemini-3-flash-preview`)
-  - `TM_GEMINI_SUMMARIZE_MODEL` (default: `gemini-3-flash-preview`)
+  - `TM_OPENAI_TRANSCRIBE_MODEL` (default: `gpt-transcribe`)
+  - `TM_OPENAI_SUMMARIZE_MODEL` (default: `gpt-6-luna`)
+  - `TM_GEMINI_TRANSCRIBE_MODEL` (default: `gemini-3.5-transcribe`)
+  - `TM_GEMINI_SUMMARIZE_MODEL` (default: `gemini-3.8-flash`)
+- `TM_API_TIMEOUT_SECONDS` (default: `180`) / `TM_API_MAX_RETRIES` (default: `1`) — applied to every client in `get_client()`; the SDK default of 10 min × 3 attempts made a slow call look like a hang
 - No real key needed for unit tests — tests that construct a client monkeypatch `settings.openai_api_key` to a dummy value per-test (never globally, so integration tests still use the real key)
 
 ## Demo Mode
@@ -28,35 +29,42 @@
 
 ## Architecture
 - FastAPI app with SSE-based transcription pipeline: download → chunk → transcription API → save (with chunk cache for resume)
+- Layers, dependencies point downward only:
+  - `api.py` — HTTP only: request models/validation, routes, turning pipeline events into SSE. No orchestration, no file access
+  - `pipeline.py` — the transcription use case. `run_transcription()` is one async generator shared by new transcriptions and retranscribes (`record=` switches mode); yields `(event_name, payload)` tuples and never imports FastAPI. Cancellation comes in as an `is_cancelled` callable
+  - `model_policy.py` — pure rules: `is_gemini_model`, `resolve_model`, `available_providers`. No clients, no I/O
+  - `history.py`, `transcriber.py`, `downloader.py`, `summarizer.py`, `clients.py` — storage and external services
 - History stored as markdown files with YAML frontmatter in `results/` — no database
-- AI summarization via Chat Completions API (OpenAI or Gemini) — summaries stored as sidecar files `results/{record_id}_summary.md`
+- AI summarization via Chat Completions API (OpenAI or Gemini); `temperature` is only sent to Gemini because OpenAI's GPT-6 models reject non-default values — summaries stored as sidecar files `results/{record_id}_summary.md`
 - Frontend is vanilla HTML/CSS/JS in `app/static/` — no build step
 
 ## Key Patterns
 - Record IDs: 8-char hex from `uuid4().hex[:8]`, validated via regex before any file op
 - `_resolve_path()` in `history.py`: validates ID format + glob lookup + path traversal guard
-- SSE generators in `api.py`: yield progress events, handle client disconnect, `finally` marks interrupted records as failed
+- `run_transcription()` in `pipeline.py`: yields progress events, checks `is_cancelled` between steps, `finally` marks interrupted records as failed; `_as_sse()` in `api.py` serializes the events
 - SSE progress events include `chunk`, `chunks_total`, and `eta_seconds` fields during transcription (ETA from rolling average of per-chunk times)
-- `complete_record()` / `fail_record()` rebuild the full YAML meta dict from parsed record — always include all fields
+- `complete_record()` / `fail_record()` / `reset_record()` all go through `_transition()` in `history.py` — the only place that rebuilds the YAML meta dict; add new frontmatter fields there
+- Status values are `STATUS_IN_PROGRESS` / `STATUS_DONE` / `STATUS_ERROR` from `history.py`; ID format check is `is_valid_record_id()` — don't re-inline the strings or the regex
+- `fail_stale_records(reason, older_than_seconds)` in `history.py` backs both startup cleanup and `POST /api/cleanup`; `purge_temp_dir()` in `transcriber.py` empties `tmp/`
 - `_write_md()` uses `sort_keys=False` to preserve frontmatter key order
 - Audio cached in `results/{record_id}.mp3` after download — reused by retranscribe and same-URL re-transcriptions, deleted with record
 - `find_cached_audio_by_url()` in `history.py`: scans existing records to skip re-download when the same URL is transcribed again
 - Summary sidecar: `results/{record_id}_summary.md` with YAML frontmatter (prompt, created_at) + body
 - `delete_record()` cascades to delete summary sidecar, audio cache, and chunk cache
-- Video title prepended as first line of transcript and summary body in `api.py` (all codepaths: transcribe, demo, retranscribe, summarize, demo summarize)
+- Video title prepended as first line of transcript (`with_title()` in `pipeline.py`, also used by demo) and of summary body (in `api.py`)
 - Chunk cache sidecar: `results/{record_id}_chunks.json` — stores completed chunk transcriptions for resume after interruption
-- `_chunk_cache_key()` hashes `model|diarize|total` (SHA256, 16-char prefix) — cache invalidated when any parameter changes
+- `_chunk_cache_key()` hashes `model|total` (SHA256, 16-char prefix) — cache invalidated when any parameter changes
 - `load_chunk_cache()` / `save_chunk_cache()` / `delete_chunk_cache()` in `history.py` manage the chunk cache lifecycle
 - Chunk cache saved after each chunk completes; deleted on successful transcription completion
 
 ## Transcription Models
-- `gpt-4o-transcribe` (default) — OpenAI Whisper, plain text output
-- `gpt-4o-transcribe-diarize` — OpenAI Whisper with speaker detection, returns `A: text`, `B: text` speaker labels
-- `gemini-*` models — Google Gemini via OpenAI-compatible endpoint, uses chat + `input_audio` for transcription; diarization is prompt-driven (not API-native like Whisper) using same `A: B:` label format
-- `TM_TRANSCRIBE_MODEL` overrides the default; frontend sends `diarize: true` as a separate boolean
-- Model resolved once at request time via `resolve_model(model, diarize)` in `api.py` — same resolved values used for both storage (`get_stored_model`) and execution (`transcribe_chunk`)
-- `resolve_model()` extracts base model from `-diarize` suffix for backward compat (e.g. `"gemini-2.0-flash-diarize"` → `("gemini-2.0-flash", True)`)
-- Shared Gemini helpers (`is_gemini_model`, `get_client`) live in `app/clients.py` — used by both transcriber and summarizer
+- `gpt-transcribe` (default) — OpenAI speech-to-text, plain text output
+- `gemini-3.5-transcribe` (Gemini default) and other `gemini-*` models — Google Gemini via OpenAI-compatible endpoint, uses chat + `input_audio` for transcription
+- `TM_TRANSCRIBE_MODEL` overrides the default
+- Model resolved once per request via `resolve_model(requested)` in `model_policy.py` (called by `pipeline.py`) — the same value is stored on the record and used for execution
+- Speaker detection (diarization) was removed. Old records still carry `*-diarize` model names: `resolve_model()` strips the suffix, the frontend still colours `A:`/`B:` labels in old transcripts and shows a "speakers" badge for them. A `diarize` field sent by an old client is ignored
+- `get_client()` lives in `app/clients.py` — used by both transcriber and summarizer (`is_gemini_model` is re-exported there and from `transcriber.py`)
+- Gemini transcription uses `gemini-3.5-transcribe`, Google's dedicated speech-to-text model, through the same chat + `input_audio` call. It is not a reasoning model: it rejects `reasoning_effort` with a 400, and it is not served on the OpenAI-compatible `/audio/transcriptions` route (404). Avoid general Flash models here — with default thinking `gemini-3-flash-preview` took 18s to over 50s on a 2-minute clip that the transcribe model does in ~4s
 - Gemini retry logic: `MAX_GEMINI_RETRIES = 3` with exponential backoff (`2^attempt` seconds) on empty content — raises `RuntimeError` after all retries exhausted
 - `duration_limit` API field is in minutes; converted to seconds (`* 60`) in the handler before storage
 - `duration_limit` validation: `0 <= v <= 480` (0 = no limit, max = 8 hours)
@@ -81,10 +89,12 @@
 - `tmp_results` fixture monkeypatches `history.RESULTS_DIR` to a temp dir
 - Test classes group related tests (e.g. `TestLifecycle`, `TestEdgeCases`)
 - Mock external deps (yt-dlp, ffmpeg, OpenAI) in unit tests
+- Test the transcription flow through `run_transcription()` in `tests/test_pipeline.py` (patch `app.pipeline.download_audio` / `prepare_chunks` / `transcribe_chunk`), not through the HTTP endpoints
 - Integration tests marked with `@pytest.mark.integration`
 
 ## Integration Tests
 - Run with: `poetry run pytest -m integration -v --log-cli-level=INFO`
+- The sandbox blocks the macOS trust store that `openai` 3.x uses for TLS, so real API calls fail there with `SSLCertVerificationError` — run integration tests outside the sandbox
 - Requires: internet, ffmpeg, `TM_OPENAI_API_KEY` (OpenAI tests), `GOOGLE_API_KEY` (Gemini tests + LLM judge)
 - Tests with missing keys are skipped automatically
 - Audio caching: downloaded audio cached in `tmp/test_cache/` (in-memory + disk); only `test_download_returns_valid_audio` downloads fresh

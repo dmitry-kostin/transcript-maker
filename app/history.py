@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,17 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(settings.results_dir)
+
+STATUS_IN_PROGRESS = "in_progress"
+STATUS_DONE = "done"
+STATUS_ERROR = "error"
+
+_RECORD_ID_RE = re.compile(r"[0-9a-f]{8}")
+
+
+def is_valid_record_id(record_id: str) -> bool:
+    """Record IDs are 8 lowercase hex chars. Check this before any file operation."""
+    return bool(_RECORD_ID_RE.fullmatch(record_id))
 
 
 def _slugify(text: str, max_len: int = 50) -> str:
@@ -89,7 +101,7 @@ def create_record(title: str, url: str, duration: float, model: str = "", durati
     meta = {
         "title": title,
         "url": url,
-        "status": "in_progress",
+        "status": STATUS_IN_PROGRESS,
         "duration": int(duration),
         "duration_limit": duration_limit,
         "model": model,
@@ -101,58 +113,54 @@ def create_record(title: str, url: str, duration: float, model: str = "", durati
     return record_id
 
 
-def complete_record(record_id: str, text: str) -> bool:
-    """Update a record to status: done and write the transcript body. Returns True if written."""
+def _transition(
+    record_id: str,
+    status: str,
+    *,
+    body: str = "",
+    error: str = "",
+    model: str | None = None,
+    duration_limit: int | None = None,
+) -> bool:
+    """Move a record to a new status, rewriting its frontmatter. Returns True if written.
+
+    The one place that rebuilds the full meta dict, so every status change keeps all
+    fields in the canonical order. ``model`` / ``duration_limit`` keep their stored
+    value unless given.
+    """
     path = _resolve_path(record_id)
     if not path:
-        logger.warning("Cannot complete record %s: file not found", record_id)
+        logger.warning("Cannot mark record %s as %s: file not found", record_id, status)
         return False
-
     parsed = _parse_md(path)
     if not parsed:
         return False
 
-    words = len(text.split()) if text else 0
     meta = {
         "title": parsed["title"],
         "url": parsed["url"],
-        "status": "done",
+        "status": status,
         "duration": parsed["duration"],
-        "duration_limit": parsed.get("duration_limit", 0),
-        "model": parsed.get("model", ""),
-        "words": words,
-        "created_at": parsed["created_at"],
-        "error": "",
+        "duration_limit": parsed.get("duration_limit", 0) if duration_limit is None else duration_limit,
+        "model": parsed.get("model", "") if model is None else model,
     }
-    _write_md(path, meta, text)
-    logger.info("Record completed: %s", record_id)
+    if status == STATUS_DONE:
+        meta["words"] = len(body.split())
+    meta["created_at"] = parsed["created_at"]
+    meta["error"] = error
+    _write_md(path, meta, body)
+    logger.info("Record %s: %s", status, record_id)
     return True
+
+
+def complete_record(record_id: str, text: str) -> bool:
+    """Update a record to status: done and write the transcript body. Returns True if written."""
+    return _transition(record_id, STATUS_DONE, body=text)
 
 
 def fail_record(record_id: str, error_msg: str) -> bool:
     """Update a record to status: error. Returns True if written."""
-    path = _resolve_path(record_id)
-    if not path:
-        logger.warning("Cannot fail record %s: file not found", record_id)
-        return False
-
-    parsed = _parse_md(path)
-    if not parsed:
-        return False
-
-    meta = {
-        "title": parsed["title"],
-        "url": parsed["url"],
-        "status": "error",
-        "duration": parsed["duration"],
-        "duration_limit": parsed.get("duration_limit", 0),
-        "model": parsed.get("model", ""),
-        "created_at": parsed["created_at"],
-        "error": error_msg,
-    }
-    _write_md(path, meta)
-    logger.info("Record failed: %s", record_id)
-    return True
+    return _transition(record_id, STATUS_ERROR, error=error_msg)
 
 
 def get_record(record_id: str) -> dict | None:
@@ -168,24 +176,7 @@ def get_record(record_id: str) -> dict | None:
 
 def reset_record(record_id: str, model: str = "", duration_limit: int | None = None) -> bool:
     """Reset an existing record back to in_progress with a new model. Returns True if written."""
-    path = _resolve_path(record_id)
-    if not path:
-        return False
-    parsed = _parse_md(path)
-    if not parsed:
-        return False
-    meta = {
-        "title": parsed["title"],
-        "url": parsed["url"],
-        "status": "in_progress",
-        "duration": parsed["duration"],
-        "duration_limit": duration_limit if duration_limit is not None else parsed.get("duration_limit", 0),
-        "model": model,
-        "created_at": parsed["created_at"],
-        "error": "",
-    }
-    _write_md(path, meta)
-    return True
+    return _transition(record_id, STATUS_IN_PROGRESS, model=model, duration_limit=duration_limit)
 
 
 def get_history() -> list[dict]:
@@ -236,7 +227,7 @@ def save_audio(record_id: str, audio_path: Path) -> Path | None:
 
 def get_audio_path(record_id: str) -> Path | None:
     """Find cached audio file for a record. Returns path or None."""
-    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+    if not is_valid_record_id(record_id):
         return None
     RESULTS_DIR.mkdir(exist_ok=True)
     for path in RESULTS_DIR.glob(f"{record_id}.*"):
@@ -298,7 +289,7 @@ def save_summary(record_id: str, summary: str, prompt: str = "") -> bool:
 
 def get_summary(record_id: str) -> dict | None:
     """Return summary for a record, or None if not found."""
-    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+    if not is_valid_record_id(record_id):
         return None
     sp = _summary_path(record_id)
     if not sp.exists():
@@ -328,7 +319,7 @@ def get_summary(record_id: str) -> dict | None:
 
 def delete_summary(record_id: str) -> None:
     """Delete a summary sidecar file if it exists."""
-    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+    if not is_valid_record_id(record_id):
         return
     _summary_path(record_id).unlink(missing_ok=True)
 
@@ -338,15 +329,15 @@ def _chunk_cache_path(record_id: str) -> Path:
     return RESULTS_DIR / f"{record_id}_chunks.json"
 
 
-def _chunk_cache_key(model: str, diarize: bool, total: int) -> str:
+def _chunk_cache_key(model: str, total: int) -> str:
     """Hash of parameters that invalidate the chunk cache."""
-    raw = f"{model}|{diarize}|{total}"
+    raw = f"{model}|{total}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def load_chunk_cache(record_id: str, model: str, diarize: bool, total: int) -> list[str]:
+def load_chunk_cache(record_id: str, model: str, total: int) -> list[str]:
     """Load cached chunk transcriptions. Returns list of completed parts (may be shorter than total).
-    Returns empty list if cache missing or invalidated (model/diarize/total mismatch)."""
+    Returns empty list if cache missing or invalidated (model/total mismatch)."""
     path = _chunk_cache_path(record_id)
     if not path.exists():
         return []
@@ -355,7 +346,7 @@ def load_chunk_cache(record_id: str, model: str, diarize: bool, total: int) -> l
     except (OSError, json.JSONDecodeError):
         logger.warning("Could not read chunk cache for %s", record_id)
         return []
-    if data.get("cache_key") != _chunk_cache_key(model, diarize, total):
+    if data.get("cache_key") != _chunk_cache_key(model, total):
         logger.info("Chunk cache invalidated for %s (parameter mismatch)", record_id)
         return []
     parts = data.get("parts", [])
@@ -364,33 +355,49 @@ def load_chunk_cache(record_id: str, model: str, diarize: bool, total: int) -> l
     return parts
 
 
-def save_chunk_cache(record_id: str, model: str, diarize: bool, total: int, parts: list[str]) -> None:
+def save_chunk_cache(record_id: str, model: str, total: int, parts: list[str]) -> None:
     """Persist current chunk transcription progress."""
     RESULTS_DIR.mkdir(exist_ok=True)
-    data = {"cache_key": _chunk_cache_key(model, diarize, total), "parts": parts}
+    data = {"cache_key": _chunk_cache_key(model, total), "parts": parts}
     _chunk_cache_path(record_id).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
 def delete_chunk_cache(record_id: str) -> None:
     """Remove chunk cache sidecar file."""
-    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+    if not is_valid_record_id(record_id):
         return
     _chunk_cache_path(record_id).unlink(missing_ok=True)
 
 
-def cleanup_stale_records() -> None:
-    """Mark any in_progress records as failed (stale from prior crash)."""
+def fail_stale_records(reason: str, older_than_seconds: float = 0) -> int:
+    """Fail in_progress records that nothing is working on any more. Returns how many.
+
+    With ``older_than_seconds`` only records untouched for that long are failed;
+    with 0 every in_progress record is.
+    """
     RESULTS_DIR.mkdir(exist_ok=True)
+    now = time.time()
+    failed = 0
     for path in RESULTS_DIR.glob("*.md"):
         parsed = _parse_md(path)
-        if parsed and parsed["status"] == "in_progress":
-            fail_record(parsed["id"], "Server restarted during transcription")
+        if not parsed or parsed["status"] != STATUS_IN_PROGRESS:
+            continue
+        if older_than_seconds and now - path.stat().st_mtime <= older_than_seconds:
+            continue
+        if fail_record(parsed["id"], reason):
+            failed += 1
             logger.warning("Cleaned up stale record: %s", parsed["id"])
+    return failed
+
+
+def cleanup_stale_records() -> None:
+    """Mark any in_progress records as failed (stale from prior crash)."""
+    fail_stale_records("Server restarted during transcription")
 
 
 def _resolve_path(record_id: str) -> Path | None:
     """Find the .md file for a record ID. Returns None if not found or traversal detected."""
-    if not re.fullmatch(r"[0-9a-f]{8}", record_id):
+    if not is_valid_record_id(record_id):
         return None
     RESULTS_DIR.mkdir(exist_ok=True)
     matches = list(RESULTS_DIR.glob(f"*_{record_id}.md"))

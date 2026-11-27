@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import router
 from app.history import cleanup_stale_records
+from app.model_policy import available_providers
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -52,11 +53,7 @@ def create_app() -> FastAPI:
 
     logger.info("=== startup ===")
 
-    providers = []
-    if settings.openai_api_key:
-        providers.append("OpenAI")
-    if settings.google_api_key:
-        providers.append("Gemini")
+    providers = [p["label"] for p in available_providers()]
     logger.info("Transcript Maker ready — providers: %s", ", ".join(providers) or "none (demo only)")
     logger.info("transcribe=%s  summarize=%s", settings.transcribe_model, settings.summarize_model)
     if LOG_FILE is not None:

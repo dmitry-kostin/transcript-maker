@@ -10,7 +10,6 @@ Run with: poetry run pytest -m integration -v
 """
 import json
 import logging
-import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,11 +44,6 @@ VALIDATE_TRANSCRIPT = (
     "language sentences that a human speaker would say — not garbled, empty, or nonsensical."
 )
 
-VALIDATE_DIARIZED = (
-    "Evaluate whether this is a diarized transcript with multiple lines in the format "
-    "'Speaker N: text' (or similar speaker labels). Most lines should follow this pattern."
-)
-
 VALIDATE_SUMMARY = (
     "The text above the === separator is a summary; the text below is the source transcript. "
     "Evaluate whether the summary accurately and coherently captures the key points from the transcript."
@@ -57,9 +51,6 @@ VALIDATE_SUMMARY = (
 
 
 logger = logging.getLogger(__name__)
-
-# Pattern matching speaker-labelled lines: "Speaker 1:", "A:", "B:", etc.
-_SPEAKER_LINE_RE = re.compile(r"^[A-Z][\w ]*:", re.MULTILINE)
 
 # --- Audio caching ---
 
@@ -143,11 +134,6 @@ def _append_debug(section: str) -> None:
 
 # --- Helpers ---
 
-def _has_speaker_labels(text: str) -> bool:
-    """Check if text contains speaker-labelled lines (Speaker N:, A:, B:, etc.)."""
-    return len(_SPEAKER_LINE_RE.findall(text)) >= 2
-
-
 async def _validate_with_llm(text: str, prompt: str) -> dict:
     """Use Gemini as an LLM judge to validate transcription/summary quality.
 
@@ -192,14 +178,14 @@ def _word_count(text: str) -> int:
 
 
 def _debug_transcription(
-    test_name: str, model: str, diarize: bool, text: str,
+    test_name: str, model: str, text: str,
     judge_prompt: str | None = None, judge_result: dict | None = None,
 ) -> None:
     """Append a transcription debug section."""
     wc = _word_count(text)
     lines = [
         f"## {test_name}",
-        f"**Model:** {model} | **Diarize:** {'yes' if diarize else 'no'} "
+        f"**Model:** {model} "
         f"| **Duration limit:** {DURATION_LIMIT}s | **Words:** {wc}",
         "",
         "### Transcript",
@@ -327,33 +313,8 @@ class TestIntegration:
 
             _debug_transcription(
                 "test_openai_transcription", settings.transcribe_model,
-                diarize=False, text=text,
+                text=text,
                 judge_prompt=VALIDATE_TRANSCRIPT, judge_result=judge_result,
-            )
-        finally:
-            cleanup_temp_files(path)
-
-    @pytest.mark.asyncio
-    async def test_openai_diarize_transcription(self, tmp_path):
-        """Download test video and transcribe with diarization — expect 'Speaker' lines."""
-        path, duration, title = await _get_test_audio(tmp_path)
-        try:
-            chunks = prepare_chunks(path, duration_limit=DURATION_LIMIT)
-            text = await transcribe_chunk(chunks[0], diarize=True)
-            assert len(text) > 0
-            assert _has_speaker_labels(text), "Expected speaker-labelled lines (Speaker N: / A: / B: etc.)"
-
-            judge_result = None
-            if has_gemini_key:
-                judge_result = await _validate_with_llm(text, VALIDATE_DIARIZED)
-                assert judge_result["passed"], judge_result["justification"]
-            else:
-                logger.warning("LLM judge skipped (no Gemini key) — no quality validation")
-
-            _debug_transcription(
-                "test_openai_diarize_transcription", settings.transcribe_model,
-                diarize=True, text=text,
-                judge_prompt=VALIDATE_DIARIZED, judge_result=judge_result,
             )
         finally:
             cleanup_temp_files(path)
@@ -406,30 +367,8 @@ class TestGeminiIntegration:
 
             _debug_transcription(
                 "test_gemini_transcription", settings.gemini_transcribe_model,
-                diarize=False, text=text,
+                text=text,
                 judge_prompt=VALIDATE_TRANSCRIPT, judge_result=judge_result,
-            )
-        finally:
-            cleanup_temp_files(path)
-
-    @pytest.mark.asyncio
-    async def test_gemini_diarize_transcription(self, tmp_path):
-        """Download test video and transcribe with Gemini diarization."""
-        path, duration, title = await _get_test_audio(tmp_path)
-        try:
-            chunks = prepare_chunks(path, duration_limit=DURATION_LIMIT)
-            text = await transcribe_chunk(
-                chunks[0], model=settings.gemini_transcribe_model, diarize=True,
-            )
-            assert len(text) > 0
-            assert _has_speaker_labels(text), "Expected speaker-labelled lines (Speaker N: / A: / B: etc.)"
-            judge_result = await _validate_with_llm(text, VALIDATE_DIARIZED)
-            assert judge_result["passed"], judge_result["justification"]
-
-            _debug_transcription(
-                "test_gemini_diarize_transcription", settings.gemini_transcribe_model,
-                diarize=True, text=text,
-                judge_prompt=VALIDATE_DIARIZED, judge_result=judge_result,
             )
         finally:
             cleanup_temp_files(path)
