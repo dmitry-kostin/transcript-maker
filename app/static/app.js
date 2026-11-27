@@ -27,7 +27,6 @@ const errorEl = document.getElementById("error");
 const historyList = document.getElementById("history-list");
 const toastEl = document.getElementById("toast");
 const cleanupBtn = document.getElementById("cleanup-btn");
-const diarizeToggle = document.getElementById("diarize-toggle");
 const durationToggle = document.getElementById("duration-toggle");
 
 let abortController = null;
@@ -154,6 +153,12 @@ function stopEtaCountdown() {
 function setState(newState, data = {}) {
   currentState = newState;
 
+  // The ETA countdown writes to progressStatus on a 1s timer. Any state other
+  // than TRANSCRIBING owns that text now, so kill the timer first — otherwise a
+  // tick landing after the transition overwrites "Done!" / "Cancelled." with the
+  // stale chunk message and leaves the UI looking stuck.
+  if (newState !== AppState.TRANSCRIBING) stopEtaCountdown();
+
   // Layout state: idle vs active
   const isIdle = newState === AppState.IDLE;
   app.dataset.state = isIdle ? "idle" : "active";
@@ -164,7 +169,6 @@ function setState(newState, data = {}) {
   transcribeBtn.disabled = isActive;
   cancelBtn.hidden = !isActive;
   urlInput.disabled = isActive;
-  diarizeToggle.disabled = isActive;
   durationToggle.disabled = isActive;
 
   // Progress section
@@ -781,16 +785,10 @@ async function runSSE(fetchUrl, fetchBody) {
     });
 
     if (!response.ok) {
-      if (response.status === 422) {
-        try {
-          const body = await response.json();
-          const msg = body?.detail?.[0]?.msg || "Invalid request";
-          throw new Error(msg.replace(/^Value error,\s*/i, ""));
-        } catch (e) {
-          if (e instanceof Error && e.message !== "Invalid request") throw e;
-        }
-      }
-      throw new Error(`Server error: ${response.status}`);
+      // 422 carries pydantic's detail list; every other refusal is {"error": message}
+      const body = await response.json().catch(() => null);
+      const msg = response.status === 422 ? body?.detail?.[0]?.msg : body?.error;
+      throw new Error(msg ? msg.replace(/^Value error,\s*/i, "") : `Server error: ${response.status}`);
     }
 
     const reader = response.body.getReader();
@@ -828,7 +826,6 @@ async function runSSE(fetchUrl, fetchBody) {
     transcribeBtn.disabled = false;
     cancelBtn.hidden = true;
     urlInput.disabled = false;
-    diarizeToggle.disabled = false;
     durationToggle.disabled = false;
     loadHistory();
   }
@@ -845,17 +842,15 @@ function getDurationLimit() {
 }
 
 async function startTranscription(url) {
-  const diarize = document.getElementById("diarize-toggle").checked;
   const duration_limit = getDurationLimit();
   const model = getTranscribeModel();
-  runSSE(`${apiPrefix}/transcribe`, { url, diarize, duration_limit, model });
+  runSSE(`${apiPrefix}/transcribe`, { url, duration_limit, model });
 }
 
 function retranscribe(id) {
-  const diarize = document.getElementById("diarize-toggle").checked;
   const duration_limit = getDurationLimit();
   const model = getTranscribeModel();
-  runSSE(`${apiPrefix}/history/${id}/retranscribe`, { diarize, duration_limit, model });
+  runSSE(`${apiPrefix}/history/${id}/retranscribe`, { duration_limit, model });
 }
 
 function handleEvent(event, data) {
@@ -918,7 +913,6 @@ cancelBtn.addEventListener("click", () => {
     transcribeBtn.disabled = false;
     cancelBtn.hidden = true;
     urlInput.disabled = false;
-    diarizeToggle.disabled = false;
     durationToggle.disabled = false;
   }
 });
@@ -935,10 +929,6 @@ document.getElementById("duration-toggle").addEventListener("change", (e) => {
   } else {
     group.classList.remove("visible");
   }
-});
-
-document.getElementById("diarize-toggle").addEventListener("change", () => {
-  urlInput.blur();
 });
 
 document.getElementById("duration-limit-input").addEventListener("focus", () => {
@@ -1225,6 +1215,10 @@ async function deleteRecord(id) {
     }
     lastHistoryIds = "";
     loadHistory();
+  } else {
+    // e.g. 409: the record is being transcribed right now
+    const data = await res.json().catch(() => ({}));
+    showToast(data.error || "Could not delete");
   }
 }
 

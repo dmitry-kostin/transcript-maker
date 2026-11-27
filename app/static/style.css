@@ -205,24 +205,7 @@ body {
   display: inline-block;
 }
 
-/* ─── Diarize pill ─── */
-
-.diarize-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  flex-shrink: 0;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.diarize-pill input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
+/* ─── Toggle pill (shared parts) ─── */
 
 .pill-track {
   position: relative;
@@ -245,15 +228,6 @@ body {
   transition: transform 300ms var(--ease-spring), background 300ms ease;
 }
 
-.diarize-pill input:checked + .pill-track {
-  background: var(--amber-dim);
-}
-
-.diarize-pill input:checked + .pill-track .pill-thumb {
-  transform: translateX(12px);
-  background: var(--amber);
-}
-
 .pill-label {
   font-size: 0.78rem;
   font-weight: 500;
@@ -261,11 +235,6 @@ body {
   transition: color 200ms ease;
 }
 
-.diarize-pill input:checked ~ .pill-label {
-  color: var(--text-muted);
-}
-
-.diarize-pill:has(input:disabled),
 .duration-pill:has(input:disabled) {
   opacity: 0.5;
   pointer-events: none;
@@ -1329,14 +1298,6 @@ button:active:not(:disabled) {
 
   .kbd-hint {
     display: none !important;
-  }
-
-  .diarize-pill {
-    order: 1;
-    width: auto;
-    padding: 4px 8px;
-    border-top: 1px solid var(--border);
-    margin-top: 2px;
   }
 
   .duration-pill {

@@ -25,7 +25,6 @@
 **Transcription**
 - **YouTube → transcript** — paste a URL, get a full text via OpenAI Whisper or Google Gemini (switch providers in the UI)
 - **AI summarization** — custom or default prompt, stored alongside the transcript
-- **Speaker diarization** — optional speaker labels (`A:`, `B:`)
 - **Duration limit** — transcribe only the first N minutes of a video
 
 **Reliability**
@@ -100,7 +99,7 @@ To test the UI without a real API key or internet connection, add `?demo` to the
 http://127.0.0.1:8000?demo
 ```
 
-Demo mode simulates the full pipeline (5s download + 5s transcription) with fake data. No YouTube downloads or API calls are made. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
+Demo mode runs the real transcription flow against simulated services (5s download + 5s transcription, fake text). No YouTube downloads or API calls are made, and no audio is cached. Demo records are marked as such: demo mode cannot retranscribe or summarize a real record (and real mode cannot change a demo one), so placeholder text never replaces a real transcript. Multi-chunk progress appears randomly (~50% of the time) to exercise the chunk waveform UI.
 
 ## Configuration
 
@@ -112,14 +111,17 @@ All settings use the `TM_` prefix and can be set via environment variables or a 
 | `GOOGLE_API_KEY` | *(optional)* | Google API key for Gemini models (no `TM_` prefix) |
 | `TM_TEMP_DIR` | `./tmp` | Directory for temporary audio files |
 | `TM_RESULTS_DIR` | `./results` | Directory for saved transcript `.md` files |
+| `TM_LOG_FILE` | `./logs/app.log` | Rotating log file mirroring console output (empty string disables) |
 | `TM_MAX_CHUNK_SIZE_MB` | `24.0` | Max size per audio chunk sent to Whisper |
 | `TM_AUDIO_FORMAT` | `mp3` | Audio format for yt-dlp extraction |
-| `TM_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | Default transcription model (supports `gemini-*`) |
-| `TM_SUMMARIZE_MODEL` | `gpt-4o` | Default summarization model (supports `gemini-*`) |
-| `TM_OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | OpenAI transcription model for provider selector |
-| `TM_OPENAI_SUMMARIZE_MODEL` | `gpt-4o` | OpenAI summarization model for provider selector |
-| `TM_GEMINI_TRANSCRIBE_MODEL` | `gemini-3-flash-preview` | Gemini transcription model for provider selector |
-| `TM_GEMINI_SUMMARIZE_MODEL` | `gemini-3-flash-preview` | Gemini summarization model for provider selector |
+| `TM_TRANSCRIBE_MODEL` | `gpt-transcribe` | Default transcription model (supports `gemini-*`) |
+| `TM_SUMMARIZE_MODEL` | `gpt-6-luna` | Default summarization model (supports `gemini-*`) |
+| `TM_OPENAI_TRANSCRIBE_MODEL` | `gpt-transcribe` | OpenAI transcription model for provider selector |
+| `TM_OPENAI_SUMMARIZE_MODEL` | `gpt-6-luna` | OpenAI summarization model for provider selector |
+| `TM_GEMINI_TRANSCRIBE_MODEL` | `gemini-3.5-transcribe` | Gemini transcription model for provider selector |
+| `TM_GEMINI_SUMMARIZE_MODEL` | `gemini-3.8-flash` | Gemini summarization model for provider selector |
+| `TM_API_TIMEOUT_SECONDS` | `180` | Give up on a single OpenAI/Gemini request after this long |
+| `TM_API_MAX_RETRIES` | `1` | Automatic retries per request on timeouts and transient errors |
 
 ## Project Structure
 
@@ -129,29 +131,60 @@ transcript-maker/
 ├── run.py                  # Single-script launcher (uvicorn)
 ├── .env.example            # Template for API key
 ├── .gitignore
-├── app/
-│   ├── __init__.py
-│   ├── main.py             # FastAPI app factory, logging setup, startup log
+├── app/                    # Classes only, wired in wiring.py. Dependencies point downward: web → usecases → domain / storage / services
+│   ├── main.py             # Application(FastAPI): routes, lifespan (startup log, stale-record cleanup)
+│   ├── wiring.py           # Composition root: builds every store, service and use case
 │   ├── config.py           # pydantic-settings (env vars)
-│   ├── api.py              # API routes (transcribe + history endpoints)
-│   ├── clients.py          # Shared OpenAI/Gemini client helpers
-│   ├── downloader.py       # yt-dlp: download + extract audio
-│   ├── transcriber.py      # ffmpeg chunking + OpenAI/Gemini transcription
-│   ├── summarizer.py       # Chat Completions for summarization (OpenAI + Gemini)
-│   ├── history.py          # Persistence layer (markdown files)
+│   ├── logging_setup.py    # Console + rotating-file logging
+│   ├── web/                # HTTP only
+│   │   ├── routes.py       # ReadRoutes, WorkRoutes (transcribe / retranscribe / summarize)
+│   │   ├── demo_routes.py  # /api/demo/* — the same WorkRoutes on simulated services
+│   │   ├── schemas.py      # Request models + validation
+│   │   ├── errors.py       # Error shape, use-case error → status code
+│   │   └── sse.py          # Use-case events → Server-Sent Events
+│   ├── usecases/           # What the app does; no FastAPI imports
+│   │   ├── transcription.py # download → chunk → transcribe → save (new + re-transcribe)
+│   │   ├── summarization.py # transcript → summary sidecar
+│   │   ├── records.py      # List / load / delete / reveal records
+│   │   ├── providers.py    # Which providers are configured
+│   │   ├── maintenance.py  # Stale records + temp file cleanup
+│   │   ├── active_runs.py  # Which transcriptions are running right now
+│   │   ├── steps.py        # The outside world as a bundle of operations: real or demo
+│   │   └── errors.py       # Why a use case refused
+│   ├── domain/             # Pure rules, no I/O
+│   │   ├── model_policy.py # Provider table, model resolution
+│   │   └── limits.py       # Duration limits
+│   ├── storage/            # results/ on disk
+│   │   ├── history.py      # The four stores below, wired on one directory
+│   │   ├── record_store.py # Records (markdown + YAML frontmatter)
+│   │   ├── summary_store.py # Summary sidecars
+│   │   ├── audio_cache.py  # Downloaded audio kept beside its record
+│   │   ├── chunk_cache.py  # Finished chunks of a run in flight (resume)
+│   │   ├── results_directory.py # Record IDs → paths
+│   │   └── markdown_file.py # Frontmatter read/write
+│   ├── services/           # The outside world
+│   │   ├── clients.py      # OpenAI/Gemini API clients
+│   │   ├── downloader.py   # yt-dlp: download + extract audio
+│   │   ├── chunker.py      # ffmpeg / ffprobe: trim and split audio
+│   │   ├── transcriber.py  # OpenAI/Gemini transcription
+│   │   ├── summarizer.py   # Chat Completions for summarization
+│   │   ├── temp_files.py   # tmp/ housekeeping
+│   │   ├── demo.py         # Simulated download / chunk / transcribe / summarize
+│   │   └── desktop.py      # Reveal a file in Finder
 │   └── static/
 │       ├── index.html
 │       ├── style.css
 │       └── app.js
-├── tests/
-│   ├── conftest.py         # Shared fixtures
-│   ├── test_history.py     # History module tests
-│   ├── test_downloader.py  # Downloader unit tests (mocked yt-dlp)
-│   ├── test_transcriber.py # Transcriber unit tests (mocked ffmpeg)
-│   ├── test_summarizer.py  # Summarizer unit tests
-│   ├── test_validation.py  # URL validation tests
-│   ├── test_api_endpoints.py # API endpoint tests (TestClient)
-│   └── test_integration.py # End-to-end tests (real APIs)
+├── tests/                  # Mirrors app/: the tests for app/<pkg>/<module>.py are in tests/<pkg>/test_<module>.py
+│   ├── conftest.py         # Shared fixtures (tmp_results, history, client)
+│   ├── test_main.py        # Application + startup
+│   ├── test_wiring.py      # Composition root
+│   ├── test_integration.py # End-to-end tests (real APIs), spans all layers
+│   ├── web/                # test_routes.py, test_demo_routes.py, test_schemas.py, test_errors.py, test_sse.py
+│   ├── usecases/           # test_transcription.py, test_summarization.py, test_records.py, test_steps.py, …
+│   ├── domain/             # test_model_policy.py, test_limits.py
+│   ├── storage/            # test_record_store.py, test_summary_store.py, test_chunk_cache.py, …
+│   └── services/           # test_clients.py, test_downloader.py, test_chunker.py, test_transcriber.py, …
 ├── tmp/                    # Runtime temp files (gitignored)
 └── results/                # Saved transcripts as .md files (gitignored)
 ```
@@ -182,16 +215,14 @@ transcript-maker/
 ```json
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "model": "gpt-4o-transcribe",
-  "diarize": true,
+  "model": "gpt-transcribe",
   "duration_limit": 30
 }
 ```
 
 - `url` — YouTube video URL (required)
-- `model` — Transcription model (optional, default `gpt-4o-transcribe`). Supports OpenAI models (`gpt-4o-transcribe`) and Gemini models (`gemini-*`).
-- `diarize` — Enable speaker detection (optional, default `false`). Appends `-diarize` suffix to the stored model name.
-- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`). Converted to seconds internally.
+- `model` — Transcription model (optional, default `gpt-transcribe`). Supports OpenAI models (`gpt-transcribe`) and Gemini models (`gemini-*`).
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `240`). Converted to seconds internally.
 
 Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`. Returns 422 for non-YouTube URLs or playlist URLs.
 
@@ -206,20 +237,18 @@ Accepted YouTube hostnames: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `
 
 ### POST /api/history/{id}/retranscribe
 
-Re-transcribes an existing record using its stored URL. Returns an SSE stream identical to `/api/transcribe`. Audio is cached after the first download. Re-transcribe reuses cached audio without re-downloading from YouTube.
+Re-transcribes an existing record using its stored URL. Returns an SSE stream identical to `/api/transcribe`. Audio is cached after the first download. Re-transcribe reuses cached audio without re-downloading from YouTube. The previous transcript stays in the file until the new one completes — a failed or cancelled re-transcription marks the record as failed but does not erase it. A second re-transcription of a record that is already running is refused.
 
 **Request:**
 ```json
 {
-  "model": "gpt-4o-transcribe",
-  "diarize": false,
+  "model": "gpt-transcribe",
   "duration_limit": 0
 }
 ```
 
 - `model` — Transcription model (optional, same as `/api/transcribe`)
-- `diarize` — Enable speaker detection (optional, default `false`)
-- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `480`)
+- `duration_limit` — Transcribe only the first N minutes (optional, default `0` = no limit, max `240`)
 
 Returns 400 for invalid ID, 404 if not found, 409 if the record is currently `in_progress`.
 
@@ -229,7 +258,7 @@ Generate an AI summary for a completed transcript.
 
 **Request:**
 ```json
-{ "prompt": "Summarize the key points", "model": "gpt-4o" }
+{ "prompt": "Summarize the key points", "model": "gpt-6-luna" }
 ```
 
 - `prompt` — Custom summarization prompt (optional, empty string uses default prompt)
@@ -271,14 +300,14 @@ Returns available model providers based on which API keys are configured.
     {
       "id": "openai",
       "label": "OpenAI",
-      "transcribe_model": "gpt-4o-transcribe",
-      "summarize_model": "gpt-4o"
+      "transcribe_model": "gpt-transcribe",
+      "summarize_model": "gpt-6-luna"
     },
     {
       "id": "gemini",
       "label": "Gemini",
-      "transcribe_model": "gemini-3-flash-preview",
-      "summarize_model": "gemini-3-flash-preview"
+      "transcribe_model": "gemini-3.5-transcribe",
+      "summarize_model": "gemini-3.8-flash"
     }
   ]
 }
@@ -298,7 +327,7 @@ Each provider only appears if its API key is configured (`TM_OPENAI_API_KEY` for
     "status": "done",
     "duration": 213,
     "duration_limit": 0,
-    "model": "gpt-4o-transcribe-diarize",
+    "model": "gpt-transcribe",
     "words": 1842,
     "created_at": "2026-02-19T10:30:00",
     "error": "",
@@ -315,7 +344,7 @@ Records are sorted newest-first by `created_at`.
 
 1. **Validate** — reject non-YouTube URLs and playlist URLs (422)
 2. **Download** — yt-dlp extracts audio as 64kbps MP3 (async via thread pool), or reuse cached audio
-3. **Guard** — reject videos longer than 4 hours; check for client disconnect
+3. **Guard** — reject requests for more than 4 hours of audio (a "first N minutes" limit counts, so the start of a longer video is fine); check for client disconnect
 4. **Create record** — write `.md` file with `status: in_progress` and selected model
 5. **Truncate** — if `duration_limit` is set, ffmpeg trims audio to the specified length
 6. **Chunk** — ffmpeg splits audio into segments under 24 MB (if needed)
@@ -336,7 +365,7 @@ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 status: "done"
 duration: 213
 duration_limit: 0
-model: "gpt-4o-transcribe-diarize"
+model: "gpt-transcribe"
 words: 1842
 created_at: "2026-02-19T10:30:00"
 error: ""
@@ -354,7 +383,7 @@ Video title is prepended as the first line of both the transcript body and summa
 
 **Audio cache:** `{record_id}.mp3` — cached audio file, reused by retranscribe. Deleted automatically when the parent record is deleted.
 
-**Chunk cache:** `{record_id}_chunks.json` — stores completed chunk transcriptions as JSON for resume. Cache key is a SHA256 hash of model + diarize + chunk count; invalidated when any parameter changes. Deleted on successful completion or when the parent record is deleted.
+**Chunk cache:** `{record_id}_chunks.json` — stores completed chunk transcriptions as JSON for resume. Cache key is a SHA256 hash of model + chunk count; invalidated when any parameter changes. Deleted on successful completion or when the parent record is deleted.
 
 **Status lifecycle:** `in_progress` → `done` | `error`
 
@@ -389,6 +418,15 @@ Integration tests cache the downloaded audio in `tmp/test_cache/` to avoid re-do
 
 Each integration run writes a markdown report to `tests/debug/integration_YYYYMMDD_HHMMSS.md` with full transcript/summary text, word counts, and LLM judge confidence scores. This directory is gitignored.
 
+## Linting and formatting
+
+[Ruff](https://docs.astral.sh/ruff/) is both the linter and the formatter (configured under `[tool.ruff]` in `pyproject.toml`).
+
+```bash
+poetry run ruff check .          # lint; add --fix to apply the safe fixes
+poetry run ruff format .         # format; add --check to only report
+```
+
 ## Security
 
 - **URL validation** — only YouTube hostnames accepted, enforced server-side via pydantic
@@ -401,7 +439,7 @@ Each integration run writes a markdown report to `tests/debug/integration_YYYYMM
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes and add tests
-4. Run `poetry run pytest -v` to verify
+4. Run `poetry run ruff check . && poetry run ruff format --check .` and `poetry run pytest -v` to verify
 5. Open a pull request
 
 ## License

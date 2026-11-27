@@ -13,6 +13,7 @@ dist/
 # Project artifacts
 tmp/
 results/
+logs/
 
 # IDE & OS
 .DS_Store
