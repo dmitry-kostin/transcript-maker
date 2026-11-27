@@ -1,4 +1,5 @@
 """Housekeeping: fail records nothing is working on any more, clear leftover temp files."""
+
 import logging
 
 from app.services.temp_files import TempDirectory
@@ -25,7 +26,8 @@ class Maintenance:
         stale exactly when no run holds it.
         """
         cleaned_records = self._history.records.fail_in_progress(
-            "Cleaned up stale record", except_ids=self._active_runs.record_ids(),
+            "Cleaned up stale record",
+            except_ids=self._active_runs.record_ids(),
         )
         deleted_files = self._purge_temp_files()
         logger.info("Cleanup: deleted %d temp files, cleaned %d stale records", deleted_files, cleaned_records)

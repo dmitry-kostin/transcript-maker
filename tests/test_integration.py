@@ -8,10 +8,11 @@ These tests require:
 
 Run with: poetry run pytest -m integration -v
 """
+
 import json
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -64,6 +65,7 @@ VALIDATE_SUMMARY = (
 
 logger = logging.getLogger(__name__)
 
+
 class CachedTestAudio:
     """The test video's audio, downloaded once and cached in memory and on disk."""
 
@@ -109,8 +111,12 @@ class DebugReport:
         self._path: Path | None = None
 
     def transcription(
-        self, test_name: str, model: str, text: str,
-        judge_prompt: str | None = None, judge_result: dict | None = None,
+        self,
+        test_name: str,
+        model: str,
+        text: str,
+        judge_prompt: str | None = None,
+        judge_result: dict | None = None,
     ) -> None:
         lines = [
             f"## {test_name}",
@@ -123,7 +129,12 @@ class DebugReport:
         self._append("\n".join(lines))
 
     def summary(
-        self, test_name: str, model: str, transcript: str, summary: str, judge_result: dict | None = None,
+        self,
+        test_name: str,
+        model: str,
+        transcript: str,
+        summary: str,
+        judge_result: dict | None = None,
     ) -> None:
         lines = [
             f"## {test_name}",
@@ -167,7 +178,7 @@ class DebugReport:
         if self._path and self._path.exists():
             return self._path
         self._directory.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         self._path = self._directory / f"integration_{timestamp}.md"
         self._path.write_text(
             f"# Integration Test Run — {timestamp}\n\n"
@@ -208,10 +219,14 @@ class LlmJudge:
         confidence, justification = self._verdict(response.choices[0].message.content.strip())
         logger.info(
             "LLM judge (%s): %d%% confidence | %s | prompt: %s...",
-            self._model, confidence, justification[:80], prompt[:60],
+            self._model,
+            confidence,
+            justification[:80],
+            prompt[:60],
         )
         return {
-            "confidence": confidence, "justification": justification,
+            "confidence": confidence,
+            "justification": justification,
             "passed": confidence >= CONFIDENCE_THRESHOLD,
         }
 
@@ -294,9 +309,11 @@ class TestIntegration:
                 logger.warning("LLM judge skipped (no Gemini key) — no quality validation")
 
             _REPORT.transcription(
-                "test_openai_transcription", settings.transcribe_model,
+                "test_openai_transcription",
+                settings.transcribe_model,
                 text=text,
-                judge_prompt=VALIDATE_TRANSCRIPT, judge_result=judge_result,
+                judge_prompt=VALIDATE_TRANSCRIPT,
+                judge_result=judge_result,
             )
         finally:
             _TEMP.remove_run_files(path)
@@ -323,8 +340,11 @@ class TestIntegration:
                 logger.warning("LLM judge skipped (no Gemini key) — no quality validation")
 
             _REPORT.summary(
-                "test_openai_summarization", settings.summarize_model,
-                transcript=transcript, summary=summary, judge_result=judge_result,
+                "test_openai_summarization",
+                settings.summarize_model,
+                transcript=transcript,
+                summary=summary,
+                judge_result=judge_result,
             )
         finally:
             _TEMP.remove_run_files(path)
@@ -340,7 +360,8 @@ class TestGeminiIntegration:
         try:
             chunks = _CHUNKER.prepare_chunks(path, duration_limit=DURATION_LIMIT)
             text = await _TRANSCRIBER.transcribe_chunk(
-                chunks[0], model=settings.gemini_transcribe_model,
+                chunks[0],
+                model=settings.gemini_transcribe_model,
             )
             assert len(text) > 0
             assert isinstance(text, str)
@@ -348,9 +369,11 @@ class TestGeminiIntegration:
             assert judge_result["passed"], judge_result["justification"]
 
             _REPORT.transcription(
-                "test_gemini_transcription", settings.gemini_transcribe_model,
+                "test_gemini_transcription",
+                settings.gemini_transcribe_model,
                 text=text,
-                judge_prompt=VALIDATE_TRANSCRIPT, judge_result=judge_result,
+                judge_prompt=VALIDATE_TRANSCRIPT,
+                judge_result=judge_result,
             )
         finally:
             _TEMP.remove_run_files(path)
@@ -362,11 +385,15 @@ class TestGeminiIntegration:
         try:
             chunks = _CHUNKER.prepare_chunks(path, duration_limit=DURATION_LIMIT)
             transcript = await _TRANSCRIBER.transcribe_chunk(
-                chunks[0], model=settings.gemini_transcribe_model,
+                chunks[0],
+                model=settings.gemini_transcribe_model,
             )
             assert len(transcript) > 0
 
-            summary = await _SUMMARIZER.summarize(transcript, "", model=settings.gemini_summarize_model,
+            summary = await _SUMMARIZER.summarize(
+                transcript,
+                "",
+                model=settings.gemini_summarize_model,
             )
             assert len(summary) > 0
             assert isinstance(summary, str)
@@ -376,8 +403,11 @@ class TestGeminiIntegration:
             assert judge_result["passed"], judge_result["justification"]
 
             _REPORT.summary(
-                "test_gemini_summarization", settings.gemini_summarize_model,
-                transcript=transcript, summary=summary, judge_result=judge_result,
+                "test_gemini_summarization",
+                settings.gemini_summarize_model,
+                transcript=transcript,
+                summary=summary,
+                judge_result=judge_result,
             )
         finally:
             _TEMP.remove_run_files(path)

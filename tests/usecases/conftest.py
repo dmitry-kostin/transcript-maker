@@ -1,4 +1,5 @@
 """Shared by the use-case tests: temp dirs, a fake outside world, and use cases built on them."""
+
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -42,29 +43,41 @@ class Env:
 
     def steps(self) -> Steps:
         return Steps(
-            download=self.download, prepare_chunks=self._prepare_chunks, transcribe_chunk=self.transcribe,
-            summarize=self.summarize, check_model=self.check_model, audio_cache=StoredAudio(self.history),
+            download=self.download,
+            prepare_chunks=self._prepare_chunks,
+            transcribe_chunk=self.transcribe,
+            summarize=self.summarize,
+            check_model=self.check_model,
+            audio_cache=StoredAudio(self.history),
         )
 
     def demo_steps(self) -> Steps:
         return Steps.for_demo(DemoServices(settings))
 
     def transcription(self, steps: Steps | None = None) -> Transcription:
-        tools = RunTools(steps or self.steps(), self.history, TempDirectory(settings), self.active_runs, DurationLimits())
+        tools = RunTools(
+            steps or self.steps(), self.history, TempDirectory(settings), self.active_runs, DurationLimits()
+        )
         return Transcription(tools, self.records, settings, ModelPolicy())
 
     def summarization(self, steps: Steps | None = None) -> Summarization:
         return Summarization(steps or self.steps(), self.history, self.records, settings, ModelPolicy())
 
     async def run(
-        self, record_id: str | None = None, steps: Steps | None = None, url: str = URL,
-        requested_model: str = "", duration_limit: int = 0, is_cancelled=None,
+        self,
+        record_id: str | None = None,
+        steps: Steps | None = None,
+        url: str = URL,
+        requested_model: str = "",
+        duration_limit: int = 0,
+        is_cancelled=None,
     ) -> list[tuple[str, dict]]:
         """A new transcription of ``url``, or a re-transcription of ``record_id``; returns its events."""
         transcription = self.transcription(steps)
         options = (requested_model, duration_limit, is_cancelled or self._never_cancelled)
         events = (
-            transcription.retranscribe(record_id, *options) if record_id
+            transcription.retranscribe(record_id, *options)
+            if record_id
             else transcription.transcribe_url(url, *options)
         )
         return [event async for event in events]

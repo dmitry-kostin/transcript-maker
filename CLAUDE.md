@@ -7,6 +7,8 @@
 - `poetry run pytest -m integration` — run integration tests (needs real API key + internet)
 - `poetry run pytest tests/storage/test_record_store.py -v` — run a specific test module
 - `poetry run pytest tests/usecases` — run one layer's tests
+- `poetry run ruff check .` — lint (`--fix` applies the safe fixes)
+- `poetry run ruff format .` — format (`--check` only reports)
 
 ## Environment
 - Requires `TM_OPENAI_API_KEY` env var or `.env` file (not needed for demo mode)
@@ -97,6 +99,7 @@
 - When a method needs many related arguments, group them (`RunTools`, `RunRequest`) instead of growing the signature; when a function grows long local state, turn it into a method object (`TranscriptionRun`)
 - Prefer a null object over a flag (`NoStoredAudio`, `AnyModel`) and a subclass over a parameterised branch (`RealWorkRoutes` / `DemoWorkRoutes`)
 - Method names must not shadow builtins used in annotations (`list_all()`, not `list()`)
+- Ruff is the linter and the formatter (`[tool.ruff]` in `pyproject.toml`: line length 120, rules `E`, `W`, `F`, `I`, `B`, `UP`). Run `ruff check .` and `ruff format .` before committing; both must pass clean
 - Type hints on all signatures; `dict | None` union syntax (Python 3.10+)
 - Logging via `logging.getLogger(__name__)`
 - Records themselves stay plain dicts (not classes). Frozen dataclasses are for fixed wiring and value bundles (`Provider`, `Steps`, `History`, `RunTools`, `RunRequest`)

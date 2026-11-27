@@ -12,6 +12,7 @@ os.environ.setdefault("TM_LOG_FILE", "")
 def tmp_results(tmp_path, monkeypatch) -> Path:
     """A temporary results dir: everything built from ``settings`` stores its records there."""
     from app.config import settings
+
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     monkeypatch.setattr(settings, "results_dir", str(results_dir))
@@ -23,6 +24,7 @@ def history(tmp_results):
     """Records, summaries, audio cache and chunk cache in the temporary results dir."""
     from app.config import settings
     from app.storage.history import History
+
     return History.in_results_dir(settings)
 
 
@@ -41,4 +43,5 @@ def client(tmp_results):
     from fastapi.testclient import TestClient
 
     from app.main import Application
+
     return TestClient(Application())

@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+
 from app.config import settings
-from app.services.downloader import DownloadError, Downloader
+from app.services.downloader import Downloader, DownloadError
 
 
 class TestDownloader:
@@ -15,10 +16,6 @@ class TestDownloader:
 
         def fake_download(self, url, opts, accept=None):
             # Create the expected output file
-            import re
-            match = re.search(r"%(id)s_(\w+)\.%(ext)s", opts["outtmpl"])
-            suffix = opts["outtmpl"].split("_")[-1].split(".")[0]
-            # Parse the template to find the suffix
             template = opts["outtmpl"]
             output_path = template.replace("%(id)s", "dQw4w9WgXcQ").replace("%(ext)s", "mp3")
             Path(output_path).write_bytes(b"\x00" * 1000)
@@ -110,9 +107,14 @@ class TestDurationCheckedBeforeDownload:
         calls = []
 
         class FakeYDL:
-            def __init__(self, opts): pass
-            def __enter__(self): return self
-            def __exit__(self, *exc): return False
+            def __init__(self, opts):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
 
             def extract_info(self, url, download):
                 calls.append(("extract_info", download))

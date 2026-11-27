@@ -5,10 +5,17 @@ from app.storage.results_directory import RecordId, ResultsDirectory
 
 
 class TestRecordId:
-    @pytest.mark.parametrize("value,ok", [
-        ("0a1b2c3d", True), ("0A1B2C3D", False), ("0a1b2c3", False),
-        ("0a1b2c3d4", False), ("../../ab", False), ("", False),
-    ])
+    @pytest.mark.parametrize(
+        "value,ok",
+        [
+            ("0a1b2c3d", True),
+            ("0A1B2C3D", False),
+            ("0a1b2c3", False),
+            ("0a1b2c3d4", False),
+            ("../../ab", False),
+            ("", False),
+        ],
+    )
     def test_is_valid(self, value, ok):
         assert RecordId.is_valid(value) is ok
 

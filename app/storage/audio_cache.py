@@ -1,4 +1,5 @@
 """Downloaded audio kept beside its record (``{record_id}.mp3``), so the same video is not fetched twice."""
+
 import logging
 import shutil
 from pathlib import Path

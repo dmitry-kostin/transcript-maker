@@ -1,4 +1,5 @@
 """The desktop the server runs on (this is a local, single-user app)."""
+
 import subprocess
 from pathlib import Path
 

@@ -1,4 +1,5 @@
 """Looking at, and getting rid of, what has been transcribed."""
+
 import logging
 
 from app.services.desktop import Desktop

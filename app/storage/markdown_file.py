@@ -1,4 +1,5 @@
 """A markdown file with YAML frontmatter — the on-disk format of records and summaries."""
+
 import logging
 from pathlib import Path
 

@@ -1,4 +1,5 @@
 """Console + rotating-file logging for the app and uvicorn loggers."""
+
 import logging
 import logging.handlers
 from pathlib import Path
@@ -43,7 +44,10 @@ class LoggingSetup:
     def _file_handler(self, log_file: Path) -> logging.Handler:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         handler = logging.handlers.RotatingFileHandler(
-            log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8",
+            log_file,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
         )
         # The file spans days, so it carries the date too
         handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))

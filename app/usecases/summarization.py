@@ -1,4 +1,5 @@
 """The summarization use case: completed transcript → summary sidecar."""
+
 import logging
 
 from app.config import Settings
@@ -14,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 class Summarization:
     def __init__(
-        self, steps: Steps, history: History, records: Records, settings: Settings, policy: ModelPolicy,
+        self,
+        steps: Steps,
+        history: History,
+        records: Records,
+        settings: Settings,
+        policy: ModelPolicy,
     ) -> None:
         self._steps = steps
         self._history = history

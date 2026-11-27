@@ -1,4 +1,5 @@
 """Demo routes (`/api/demo/...`): the same handlers as the real ones, built with the simulated use cases."""
+
 from fastapi import Request
 from sse_starlette.sse import EventSourceResponse
 

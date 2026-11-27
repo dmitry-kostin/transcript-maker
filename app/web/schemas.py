@@ -1,4 +1,5 @@
 """Request bodies and their validation."""
+
 from typing import Annotated
 from urllib.parse import parse_qs, urlparse
 
@@ -34,13 +35,9 @@ class TranscribeRequest(TranscriptionOptions):
         if parsed.hostname not in ALLOWED_HOSTS:
             raise ValueError("URL must be a YouTube link")
         qs = parse_qs(parsed.query)
-        has_video_id = "v" in qs or (
-            parsed.hostname == "youtu.be" and len(parsed.path) > 1
-        )
+        has_video_id = "v" in qs or (parsed.hostname == "youtu.be" and len(parsed.path) > 1)
         if parsed.path == "/playlist" or ("list" in qs and not has_video_id):
-            raise ValueError(
-                "Playlist URLs are not supported. Please provide a single video URL."
-            )
+            raise ValueError("Playlist URLs are not supported. Please provide a single video URL.")
         return v
 
 

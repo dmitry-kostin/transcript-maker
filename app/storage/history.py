@@ -1,4 +1,5 @@
 """Everything the app keeps in ``results/``, wired together."""
+
 from dataclasses import dataclass
 
 from app.config import Settings

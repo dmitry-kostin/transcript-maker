@@ -1,4 +1,5 @@
 """The transcription use case, driven without HTTP: the outside world is passed in as fake Steps."""
+
 import pytest
 
 from app.services.downloader import DownloadError
@@ -90,6 +91,7 @@ class TestNewTranscription:
     async def test_cancel_after_download_creates_nothing(self, env):
         async def cancelled() -> bool:
             return True
+
         events = await env.run(is_cancelled=cancelled)
         assert [name for name, _ in events] == ["progress", "progress"]
         assert env.history.records.list_all() == []

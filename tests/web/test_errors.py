@@ -9,7 +9,8 @@ class TestErrorResponses:
     def test_every_use_case_error_has_a_status_code(self):
         """A new refusal must say how it reads over HTTP — not fall back to the default by accident."""
         refusals = [
-            error for _, error in inspect.getmembers(use_case_errors, inspect.isclass)
+            error
+            for _, error in inspect.getmembers(use_case_errors, inspect.isclass)
             if issubclass(error, UseCaseError) and error is not UseCaseError
         ]
         assert set(refusals) == set(ErrorResponses.STATUS_FOR)

@@ -1,4 +1,5 @@
 """API clients for the model providers (all reached through the OpenAI SDK)."""
+
 import logging
 
 from openai import AsyncOpenAI
@@ -26,9 +27,7 @@ class ClientFactory:
         provider = self._policy.provider_for(model)
         configured = self._settings.provider(provider.id)
         if not configured.api_key:
-            raise ProviderNotConfigured(
-                f"{configured.api_key_env} env var is required to use {provider.label} models"
-            )
+            raise ProviderNotConfigured(f"{configured.api_key_env} env var is required to use {provider.label} models")
         return configured
 
     def client_for(self, model: str) -> AsyncOpenAI:

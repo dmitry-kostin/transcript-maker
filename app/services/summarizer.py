@@ -1,4 +1,5 @@
 """Transcript → summary through a model provider's Chat Completions API."""
+
 import logging
 
 from app.domain.model_policy import ModelPolicy
@@ -41,8 +42,13 @@ class Summarizer:
         summary = content.strip()
         if finish_reason != "stop":
             logger.warning("Summarize finish_reason=%s (model=%s, may be truncated)", finish_reason, model)
-        logger.info("Summary generated: %d chars, %d words (model=%s, finish_reason=%s)",
-                    len(summary), len(summary.split()), model, finish_reason)
+        logger.info(
+            "Summary generated: %d chars, %d words (model=%s, finish_reason=%s)",
+            len(summary),
+            len(summary.split()),
+            model,
+            finish_reason,
+        )
         return summary
 
     def _extra_parameters(self, model: str) -> dict:

@@ -6,6 +6,7 @@ Knows nothing about HTTP. ``Transcription`` refuses what can be refused up front
 to stop via ``is_cancelled``. New transcriptions and re-transcriptions run the same
 ``TranscriptionRun``, and so does demo mode — it is built with simulated ``Steps``.
 """
+
 import asyncio
 import logging
 import time
@@ -73,7 +74,11 @@ class RunRequest:
 
 class Transcription:
     def __init__(
-        self, tools: RunTools, records: Records, settings: Settings, policy: ModelPolicy,
+        self,
+        tools: RunTools,
+        records: Records,
+        settings: Settings,
+        policy: ModelPolicy,
     ) -> None:
         self._tools = tools
         self._records = records
@@ -81,7 +86,11 @@ class Transcription:
         self._policy = policy
 
     def transcribe_url(
-        self, url: str, requested_model: str, duration_limit: int, is_cancelled: IsCancelled,
+        self,
+        url: str,
+        requested_model: str,
+        duration_limit: int,
+        is_cancelled: IsCancelled,
     ) -> AsyncIterator[Event]:
         """Transcribe ``url`` into a new record, yielding progress as it goes.
 
@@ -91,7 +100,11 @@ class Transcription:
         return self._start(url, requested_model, duration_limit, is_cancelled, existing=None)
 
     def retranscribe(
-        self, record_id: str, requested_model: str, duration_limit: int, is_cancelled: IsCancelled,
+        self,
+        record_id: str,
+        requested_model: str,
+        duration_limit: int,
+        is_cancelled: IsCancelled,
     ) -> AsyncIterator[Event]:
         """Transcribe an existing record again, in place, yielding progress as it goes.
 
@@ -107,7 +120,12 @@ class Transcription:
         return self._start(record["url"], requested_model, duration_limit, is_cancelled, existing=record)
 
     def _start(
-        self, url: str, requested_model: str, duration_limit: int, is_cancelled: IsCancelled, existing: dict | None,
+        self,
+        url: str,
+        requested_model: str,
+        duration_limit: int,
+        is_cancelled: IsCancelled,
+        existing: dict | None,
     ) -> AsyncIterator[Event]:
         model = self._policy.resolve_transcribe_model(requested_model, self._settings.transcribe_model)
         # Before any download: a missing API key would otherwise only show at the first chunk
@@ -236,8 +254,12 @@ class TranscriptionRun:
             self._record_id = self._existing["id"]
         else:
             self._record_id = records.create(
-                self._title, request.url, self._duration,
-                model=request.model, duration_limit=request.duration_limit, demo=self._steps.demo,
+                self._title,
+                request.url,
+                self._duration,
+                model=request.model,
+                duration_limit=request.duration_limit,
+                demo=self._steps.demo,
             )
         run.record_id = self._record_id
         if self._audio_needs_caching:
@@ -283,8 +305,15 @@ class TranscriptionRun:
         started = time.monotonic()
         text = await self._steps.transcribe_chunk(chunk_path, self._request.model)
         elapsed = time.monotonic() - started
-        logger.info("Chunk %d/%d done: %d words, %.1fs, %.1f MB for %s",
-                    number, total, len(text.split()), elapsed, chunk_size_mb, self._record_id)
+        logger.info(
+            "Chunk %d/%d done: %d words, %.1fs, %.1f MB for %s",
+            number,
+            total,
+            len(text.split()),
+            elapsed,
+            chunk_size_mb,
+            self._record_id,
+        )
         if not text.strip():
             logger.error("Chunk %d/%d returned empty text for %s, aborting", number, total, self._record_id)
             raise RuntimeError(f"Chunk {number} of {total} returned empty transcription")
@@ -296,11 +325,19 @@ class TranscriptionRun:
         if not self._history.records.complete(self._record_id, full_text):
             logger.warning("Transcription succeeded but history write failed for %s", self._record_id)
         self._history.chunks.delete(self._record_id)
-        logger.info("Transcription done: %s (%d chunks, %d words saved)",
-                    self._record_id, len(self._parts), sum(len(part.split()) for part in self._parts))
+        logger.info(
+            "Transcription done: %s (%d chunks, %d words saved)",
+            self._record_id,
+            len(self._parts),
+            sum(len(part.split()) for part in self._parts),
+        )
         return Events.transcript(
-            text=full_text, duration_seconds=self._duration, duration_limit=self._request.duration_limit,
-            title=self._title, record_id=self._record_id, model=self._request.model,
+            text=full_text,
+            duration_seconds=self._duration,
+            duration_limit=self._request.duration_limit,
+            title=self._title,
+            record_id=self._record_id,
+            model=self._request.model,
         )
 
     # --- stopping, failing, cleaning up ----------------------------------------------

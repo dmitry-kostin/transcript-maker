@@ -4,6 +4,7 @@ Nothing here talks to YouTube or a model API. ``Steps.demo()`` hands these to th
 real use cases, so records, progress events, cancellation and failure handling
 behave exactly as they do for real.
 """
+
 import asyncio
 import random
 import uuid
@@ -77,7 +78,7 @@ class DemoServices:
         await asyncio.sleep(DEMO_TRANSCRIBE_SECONDS / count)
         words = DEMO_TRANSCRIPT.split()
         per_chunk = -(-len(words) // count)
-        return " ".join(words[index * per_chunk:(index + 1) * per_chunk])
+        return " ".join(words[index * per_chunk : (index + 1) * per_chunk])
 
     async def summarize(self, text: str, prompt: str, model: str) -> str:
         await asyncio.sleep(DEMO_SUMMARIZE_SECONDS)

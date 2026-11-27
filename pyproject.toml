@@ -22,6 +22,7 @@ pytest = "^9.2"
 pytest-asyncio = "^1.5"
 httpx = "^0.29"
 json-repair = "^0.64"
+ruff = "^0.17.6"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -34,3 +35,14 @@ addopts = "-m 'not integration'"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, likely bugs, outdated syntax
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]

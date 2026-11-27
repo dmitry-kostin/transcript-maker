@@ -163,8 +163,10 @@ class TestPrepareChunksByDurationAndSize:
             call_count += 1
             return MagicMock(returncode=0)
 
-        with patch.object(AudioChunker, "duration", return_value=long_duration), \
-             patch("app.services.chunker.subprocess.run", side_effect=fake_ffmpeg):
+        with (
+            patch.object(AudioChunker, "duration", return_value=long_duration),
+            patch("app.services.chunker.subprocess.run", side_effect=fake_ffmpeg),
+        ):
             chunks = AudioChunker(settings).prepare_chunks(audio)
 
         assert len(chunks) == 5  # 3000s / 600s = 5 chunks
@@ -185,8 +187,10 @@ class TestPrepareChunksByDurationAndSize:
             call_count += 1
             return MagicMock(returncode=0)
 
-        with patch.object(AudioChunker, "duration", return_value=600.0), \
-             patch("app.services.chunker.subprocess.run", side_effect=fake_ffmpeg):
+        with (
+            patch.object(AudioChunker, "duration", return_value=600.0),
+            patch("app.services.chunker.subprocess.run", side_effect=fake_ffmpeg),
+        ):
             chunks = AudioChunker(settings).prepare_chunks(audio)
 
         assert len(chunks) >= 2

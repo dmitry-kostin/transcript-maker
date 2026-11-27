@@ -1,10 +1,17 @@
 """How failures reach the client: always ``{"error": message}`` with a status code."""
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.usecases.errors import (
-    ModelNotAvailable, RecordBusy, RecordFromOtherMode, RecordNotCompleted, RecordNotFound,
-    SummaryNotFound, SummaryNotSaved, UseCaseError,
+    ModelNotAvailable,
+    RecordBusy,
+    RecordFromOtherMode,
+    RecordNotCompleted,
+    RecordNotFound,
+    SummaryNotFound,
+    SummaryNotSaved,
+    UseCaseError,
 )
 
 

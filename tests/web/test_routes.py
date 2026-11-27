@@ -67,7 +67,9 @@ class TestHistoryEndpoints:
 class TestTranscribeEndpoint:
     def test_missing_api_key_is_refused_before_the_stream_starts(self, client, monkeypatch):
         monkeypatch.setattr(settings, "openai_api_key", "")
-        res = client.post("/api/transcribe", json={"url": "https://www.youtube.com/watch?v=abc123xyz", "model": "gpt-transcribe"})
+        res = client.post(
+            "/api/transcribe", json={"url": "https://www.youtube.com/watch?v=abc123xyz", "model": "gpt-transcribe"}
+        )
         assert res.status_code == 400
         assert "TM_OPENAI_API_KEY" in res.json()["error"]
 
@@ -173,9 +175,7 @@ class TestSummarizeEndpoint:
         assert data["summary"] == "# Test\n\nMocked summary"
         assert data["prompt"] == "Custom"
         assert data["model"] == "gpt-6-luna"
-        summarizer.assert_awaited_once_with(
-            "This is a test transcript with multiple words.", "Custom", "gpt-6-luna"
-        )
+        summarizer.assert_awaited_once_with("This is a test transcript with multiple words.", "Custom", "gpt-6-luna")
         # Verify it was saved
         saved = history.summaries.get(rid)
         assert saved is not None
@@ -213,55 +213,72 @@ class TestSummarizeEndpoint:
 
 class TestDurationLimitParam:
     def test_transcribe_accepts_duration_limit(self, client, with_keys):
-        res = client.post("/api/transcribe", json={
-            "url": "https://www.youtube.com/watch?v=abc123xyz",
-            "duration_limit": 5,
-        })
+        res = client.post(
+            "/api/transcribe",
+            json={
+                "url": "https://www.youtube.com/watch?v=abc123xyz",
+                "duration_limit": 5,
+            },
+        )
         # Should not be a 422 validation error — the SSE response starts (stream)
         assert res.status_code == 200
 
     def test_transcribe_rejects_negative_duration_limit(self, client):
-        res = client.post("/api/transcribe", json={
-            "url": "https://www.youtube.com/watch?v=abc123xyz",
-            "duration_limit": -1,
-        })
+        res = client.post(
+            "/api/transcribe",
+            json={
+                "url": "https://www.youtube.com/watch?v=abc123xyz",
+                "duration_limit": -1,
+            },
+        )
         assert res.status_code == 422
 
     def test_retranscribe_rejects_negative_duration_limit(self, client, tmp_path, monkeypatch, history):
         rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 600)
         history.records.complete(rid, "Some text")
-        res = client.post(f"/api/history/{rid}/retranscribe", json={
-            "model": "",
-            "duration_limit": -1,
-        })
+        res = client.post(
+            f"/api/history/{rid}/retranscribe",
+            json={
+                "model": "",
+                "duration_limit": -1,
+            },
+        )
         assert res.status_code == 422
 
     def test_transcribe_rejects_excessive_duration_limit(self, client):
         """duration_limit has an upper bound matching the frontend max (Issue #5)."""
-        res = client.post("/api/transcribe", json={
-            "url": "https://www.youtube.com/watch?v=abc123xyz",
-            "duration_limit": 999999,
-        })
+        res = client.post(
+            "/api/transcribe",
+            json={
+                "url": "https://www.youtube.com/watch?v=abc123xyz",
+                "duration_limit": 999999,
+            },
+        )
         assert res.status_code == 422
 
     def test_retranscribe_rejects_excessive_duration_limit(self, client, tmp_path, monkeypatch, history):
         rid = history.records.create("Test", "https://youtube.com/watch?v=abc", 600)
         history.records.complete(rid, "Some text")
-        res = client.post(f"/api/history/{rid}/retranscribe", json={
-            "model": "",
-            "duration_limit": 999999,
-        })
+        res = client.post(
+            f"/api/history/{rid}/retranscribe",
+            json={
+                "model": "",
+                "duration_limit": 999999,
+            },
+        )
         assert res.status_code == 422
 
     def test_duration_limit_zero_means_no_limit(self):
         """duration_limit=0 passes validation — means 'no limit' (Issue #19)."""
         from app.web.schemas import TranscribeRequest
+
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", duration_limit=0)
         assert req.duration_limit == 0
 
     def test_legacy_diarize_field_is_ignored(self):
         """Speaker detection was removed; old clients still sending the flag don't break."""
-        from app.web.schemas import TranscribeRequest, RetranscribeRequest
+        from app.web.schemas import RetranscribeRequest, TranscribeRequest
+
         req = TranscribeRequest(url="https://www.youtube.com/watch?v=abc123xyz", diarize=True)
         assert not hasattr(req, "diarize")
         assert RetranscribeRequest(diarize=True, duration_limit=5).duration_limit == 5
@@ -270,6 +287,7 @@ class TestDurationLimitParam:
 class TestProvidersEndpoint:
     def test_both_keys(self, client, monkeypatch):
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         res = client.get("/api/providers")
@@ -282,6 +300,7 @@ class TestProvidersEndpoint:
 
     def test_openai_only(self, client, monkeypatch):
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "")
         res = client.get("/api/providers")
@@ -291,6 +310,7 @@ class TestProvidersEndpoint:
 
     def test_gemini_only(self, client, monkeypatch):
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         res = client.get("/api/providers")
@@ -300,6 +320,7 @@ class TestProvidersEndpoint:
 
     def test_no_keys(self, client, monkeypatch):
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "")
         res = client.get("/api/providers")
@@ -308,6 +329,7 @@ class TestProvidersEndpoint:
 
     def test_gemini_default_model_used(self, client, monkeypatch):
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         monkeypatch.setattr(api_mod.settings, "transcribe_model", "gemini-2.5-flash")
@@ -323,6 +345,7 @@ class TestProvidersEndpoint:
     def test_providers_use_per_provider_settings(self, client, monkeypatch):
         """Per-provider model settings are configurable via env vars."""
         import app.config as api_mod
+
         monkeypatch.setattr(api_mod.settings, "openai_api_key", "sk-test")
         monkeypatch.setattr(api_mod.settings, "google_api_key", "gk-test")
         monkeypatch.setattr(api_mod.settings, "gemini_transcribe_model", "gemini-custom")

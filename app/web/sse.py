@@ -1,4 +1,5 @@
 """Use-case events → a Server-Sent Events response."""
+
 import json
 from collections.abc import AsyncIterator
 

@@ -1,4 +1,5 @@
 """The composition root: every object the app is made of, built once and handed its collaborators."""
+
 from app.config import Settings
 from app.domain.limits import DurationLimits
 from app.domain.model_policy import ModelPolicy
@@ -43,8 +44,12 @@ class Wiring:
     def _real_steps(self) -> Steps:
         clients = ClientFactory(self._settings, self._policy)
         return Steps.for_real(
-            Downloader(self._settings), AudioChunker(self._settings), Transcriber(clients, self._policy),
-            Summarizer(clients, self._policy), clients, self._history,
+            Downloader(self._settings),
+            AudioChunker(self._settings),
+            Transcriber(clients, self._policy),
+            Summarizer(clients, self._policy),
+            clients,
+            self._history,
         )
 
     def _transcription(self, steps: Steps) -> Transcription:

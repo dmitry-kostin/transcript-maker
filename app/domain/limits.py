@@ -1,4 +1,5 @@
 """How much audio one request may ask for. Pure rules, shared by the HTTP layer and the use cases."""
+
 from dataclasses import dataclass
 
 # Longest stretch of audio one transcription will process
@@ -26,4 +27,6 @@ class DurationLimits:
         seconds = int(self.seconds_to_transcribe(duration, duration_limit))
         if seconds <= self.max_seconds:
             return None
-        return f"Video too long ({seconds // 3600}h {(seconds % 3600) // 60}m). Max is {self.max_seconds // 3600} hours."
+        return (
+            f"Video too long ({seconds // 3600}h {(seconds % 3600) // 60}m). Max is {self.max_seconds // 3600} hours."
+        )

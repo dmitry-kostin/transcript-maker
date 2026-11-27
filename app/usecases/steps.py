@@ -3,6 +3,7 @@
 ``Steps.for_real()`` talks to YouTube, ffmpeg and the model APIs; ``Steps.for_demo()``
 simulates all of it. The use cases never know which one they were given.
 """
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,8 +97,13 @@ class Steps:
 
     @classmethod
     def for_real(
-        cls, downloader: Downloader, chunker: AudioChunker, transcriber: Transcriber,
-        summarizer: Summarizer, clients: ClientFactory, history: History,
+        cls,
+        downloader: Downloader,
+        chunker: AudioChunker,
+        transcriber: Transcriber,
+        summarizer: Summarizer,
+        clients: ClientFactory,
+        history: History,
     ) -> "Steps":
         return cls(
             download=downloader.download,

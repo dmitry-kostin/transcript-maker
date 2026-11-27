@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Launch the Transcript Maker server."""
+
 import logging
 import os
 import sys

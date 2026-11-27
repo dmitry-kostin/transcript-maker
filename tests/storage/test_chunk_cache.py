@@ -1,5 +1,3 @@
-
-
 class TestChunkCache:
     def test_save_and_load(self, tmp_results, history):
         rid = history.records.create("Vid", "https://youtube.com/watch?v=abc", 60)

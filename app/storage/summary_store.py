@@ -1,6 +1,7 @@
 """Summaries: one sidecar file ``{record_id}_summary.md`` beside its record."""
+
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.storage.markdown_file import MarkdownFile
 from app.storage.results_directory import RecordId, ResultsDirectory
@@ -19,7 +20,7 @@ class SummaryStore:
         meta = {
             "prompt": prompt,
             "model": model,
-            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
         }
         MarkdownFile(self._directory.summary_file(record_id)).write(meta, summary)
         logger.info("Summary saved for record %s", record_id)

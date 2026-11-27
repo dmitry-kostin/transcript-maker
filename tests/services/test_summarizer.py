@@ -30,7 +30,9 @@ class TestSummarize(SummarizerTest):
     @pytest.mark.asyncio
     async def test_returns_stripped_summary(self):
         client = self._client("  A concise summary  ")
-        assert await self._summarizer(client).summarize("Long transcript...", "Summarize", "gpt-4o") == "A concise summary"
+        assert (
+            await self._summarizer(client).summarize("Long transcript...", "Summarize", "gpt-4o") == "A concise summary"
+        )
 
     @pytest.mark.asyncio
     async def test_runs_the_model_it_is_given(self):

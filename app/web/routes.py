@@ -1,4 +1,5 @@
 """HTTP routes. Validation, status codes and SSE only — the work happens in ``app.usecases``."""
+
 import logging
 
 from fastapi import APIRouter, Request
@@ -104,7 +105,10 @@ class WorkRoutes(Routes):
     async def retranscribe(self, record_id: str, req: RetranscribeRequest, request: Request) -> EventSourceResponse:
         self._require_valid_id(record_id)
         events = self._transcription.retranscribe(
-            record_id, req.model, req.duration_limit_seconds, request.is_disconnected,
+            record_id,
+            req.model,
+            req.duration_limit_seconds,
+            request.is_disconnected,
         )
         return EventStream(events).response()
 
@@ -120,7 +124,10 @@ class WorkRoutes(Routes):
 
     def _transcribe_url(self, url: str, req: TranscriptionOptions, request: Request) -> EventSourceResponse:
         events = self._transcription.transcribe_url(
-            url, req.model, req.duration_limit_seconds, request.is_disconnected,
+            url,
+            req.model,
+            req.duration_limit_seconds,
+            request.is_disconnected,
         )
         return EventStream(events).response()
 

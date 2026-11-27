@@ -1,4 +1,5 @@
 """Where records and their sidecar files live, and how a record ID maps to them."""
+
 import re
 import uuid
 from pathlib import Path

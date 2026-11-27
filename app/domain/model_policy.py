@@ -5,6 +5,7 @@ decides *which* model a request means, and what its provider can do, lives here.
 How a provider is configured on this machine (API key, endpoint, default models)
 is ``settings.provider(provider.id)`` in ``app.config``.
 """
+
 from dataclasses import dataclass
 
 LEGACY_DIARIZE_SUFFIX = "-diarize"

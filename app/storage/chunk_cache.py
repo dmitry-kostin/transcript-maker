@@ -1,4 +1,5 @@
 """Finished chunk transcriptions of a run in flight (``{record_id}_chunks.json``), so an interrupted run can resume."""
+
 import hashlib
 import json
 import logging

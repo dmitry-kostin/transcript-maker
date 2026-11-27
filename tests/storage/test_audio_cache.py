@@ -1,5 +1,3 @@
-
-
 class TestAudioCache:
     def test_save_and_find(self, tmp_results, tmp_path, history):
         rid = history.records.create("Vid", "https://youtube.com/watch?v=abc", 60)

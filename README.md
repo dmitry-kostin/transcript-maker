@@ -418,6 +418,15 @@ Integration tests cache the downloaded audio in `tmp/test_cache/` to avoid re-do
 
 Each integration run writes a markdown report to `tests/debug/integration_YYYYMMDD_HHMMSS.md` with full transcript/summary text, word counts, and LLM judge confidence scores. This directory is gitignored.
 
+## Linting and formatting
+
+[Ruff](https://docs.astral.sh/ruff/) is both the linter and the formatter (configured under `[tool.ruff]` in `pyproject.toml`).
+
+```bash
+poetry run ruff check .          # lint; add --fix to apply the safe fixes
+poetry run ruff format .         # format; add --check to only report
+```
+
 ## Security
 
 - **URL validation** — only YouTube hostnames accepted, enforced server-side via pydantic
@@ -430,7 +439,7 @@ Each integration run writes a markdown report to `tests/debug/integration_YYYYMM
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes and add tests
-4. Run `poetry run pytest -v` to verify
+4. Run `poetry run ruff check . && poetry run ruff format --check .` and `poetry run pytest -v` to verify
 5. Open a pull request
 
 ## License

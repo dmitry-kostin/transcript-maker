@@ -1,4 +1,5 @@
 """ffmpeg / ffprobe: cut audio into pieces the transcription APIs accept."""
+
 import json
 import logging
 import subprocess
@@ -39,7 +40,9 @@ class AudioChunker:
         """Audio duration in seconds, via ffprobe."""
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(audio_path)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         try:
             duration = float(json.loads(result.stdout)["format"]["duration"])
@@ -51,8 +54,19 @@ class AudioChunker:
     def _trim(self, audio_path: Path, duration_limit: int, duration: float) -> Path:
         trimmed = audio_path.parent / f"{audio_path.stem}_trimmed{audio_path.suffix}"
         subprocess.run(
-            ["ffmpeg", "-y", "-v", "quiet", "-i", str(audio_path),
-             "-t", str(duration_limit), "-c", "copy", str(trimmed)],
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "quiet",
+                "-i",
+                str(audio_path),
+                "-t",
+                str(duration_limit),
+                "-c",
+                "copy",
+                str(trimmed),
+            ],
             check=True,
         )
         logger.info("Trimmed audio to %ds (was %.0fs)", duration_limit, duration)
@@ -67,12 +81,22 @@ class AudioChunker:
             chunk = self._cut(audio_path, len(chunks), offset, chunk_duration)
             actual_duration = self.duration(chunk)
             total_chunk_duration += actual_duration
-            logger.info("Chunk %d: offset=%.1fs, %.1f MB, %.1fs actual duration",
-                        len(chunks), offset, self._size_mb(chunk), actual_duration)
+            logger.info(
+                "Chunk %d: offset=%.1fs, %.1f MB, %.1fs actual duration",
+                len(chunks),
+                offset,
+                self._size_mb(chunk),
+                actual_duration,
+            )
             chunks.append(chunk)
             offset += chunk_duration
-        logger.info("Split into %d chunks (total chunk duration=%.1fs, original=%.1fs, diff=%.1fs)",
-                    len(chunks), total_chunk_duration, duration, total_chunk_duration - duration)
+        logger.info(
+            "Split into %d chunks (total chunk duration=%.1fs, original=%.1fs, diff=%.1fs)",
+            len(chunks),
+            total_chunk_duration,
+            duration,
+            total_chunk_duration - duration,
+        )
         return chunks
 
     def _chunk_duration(self, audio_path: Path, duration: float) -> float:
@@ -84,8 +108,21 @@ class AudioChunker:
     def _cut(self, audio_path: Path, index: int, offset: float, chunk_duration: float) -> Path:
         chunk = audio_path.parent / f"{audio_path.stem}_chunk{index}.{self._settings.audio_format}"
         subprocess.run(
-            ["ffmpeg", "-y", "-v", "quiet", "-ss", str(offset), "-t", str(chunk_duration),
-             "-i", str(audio_path), "-c", "copy", str(chunk)],
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "quiet",
+                "-ss",
+                str(offset),
+                "-t",
+                str(chunk_duration),
+                "-i",
+                str(audio_path),
+                "-c",
+                "copy",
+                str(chunk),
+            ],
             check=True,
         )
         size_mb = self._size_mb(chunk)

@@ -1,4 +1,5 @@
 """The web application: ``Application()`` is the whole server, ready for uvicorn (``factory=True``)."""
+
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

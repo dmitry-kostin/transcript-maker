@@ -23,6 +23,7 @@ class TestNothingAtImport:
     def test_module_does_not_build_an_app(self):
         """The server builds it through the factory; importing app.main configures nothing."""
         import app.main
+
         assert not hasattr(app.main, "app")
 
 

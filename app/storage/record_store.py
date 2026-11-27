@@ -1,8 +1,9 @@
 """Transcription records: one markdown file with YAML frontmatter each — no database."""
+
 import logging
 import re
 from collections.abc import Collection
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.storage.audio_cache import AudioCache
@@ -28,7 +29,11 @@ class RecordStore:
     """
 
     def __init__(
-        self, directory: ResultsDirectory, summaries: SummaryStore, audio: AudioCache, chunks: ChunkCache,
+        self,
+        directory: ResultsDirectory,
+        summaries: SummaryStore,
+        audio: AudioCache,
+        chunks: ChunkCache,
     ) -> None:
         self._directory = directory
         self._summaries = summaries
@@ -38,7 +43,13 @@ class RecordStore:
     # --- lifecycle ---------------------------------------------------------------
 
     def create(
-        self, title: str, url: str, duration: float, model: str = "", duration_limit: int = 0, demo: bool = False,
+        self,
+        title: str,
+        url: str,
+        duration: float,
+        model: str = "",
+        duration_limit: int = 0,
+        demo: bool = False,
     ) -> str:
         """Create a record with status in_progress. Returns its ID.
 
@@ -52,7 +63,7 @@ class RecordStore:
             "duration": int(duration),
             "duration_limit": duration_limit,
             "model": model,
-            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
             "error": "",
         }
         if demo:

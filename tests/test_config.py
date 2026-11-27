@@ -18,5 +18,9 @@ class TestProviderSettings:
         monkeypatch.setattr(settings, "google_api_key", "gk-test")
         monkeypatch.setattr(settings, "gemini_transcribe_model", "gemini-custom")
         gemini = settings.provider("gemini")
-        assert (gemini.api_key, gemini.base_url, gemini.transcribe_model) == ("gk-test", GEMINI_BASE_URL, "gemini-custom")
+        assert (gemini.api_key, gemini.base_url, gemini.transcribe_model) == (
+            "gk-test",
+            GEMINI_BASE_URL,
+            "gemini-custom",
+        )
         assert settings.provider("openai").base_url is None

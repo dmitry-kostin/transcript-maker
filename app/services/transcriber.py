@@ -1,4 +1,5 @@
 """Speech to text through a model provider's API."""
+
 import asyncio
 import base64
 import logging
@@ -59,15 +60,29 @@ class Transcriber:
 
             if content:
                 text = content.strip()
-                logger.info("Transcribed %s via %s: %d words, %d chars (finish_reason=%s, usage=%s)",
-                            chunk_path.name, label, len(text.split()), len(text), finish_reason, usage)
+                logger.info(
+                    "Transcribed %s via %s: %d words, %d chars (finish_reason=%s, usage=%s)",
+                    chunk_path.name,
+                    label,
+                    len(text.split()),
+                    len(text),
+                    finish_reason,
+                    usage,
+                )
                 if finish_reason != "stop":
-                    logger.warning("%s finish_reason=%s for %s (may be truncated)", label, finish_reason, chunk_path.name)
+                    logger.warning(
+                        "%s finish_reason=%s for %s (may be truncated)", label, finish_reason, chunk_path.name
+                    )
                 return text
 
             logger.warning(
                 "%s returned empty content for %s (attempt %d/%d, finish_reason=%s, usage=%s)",
-                label, chunk_path.name, attempt, MAX_EMPTY_RESPONSE_RETRIES, finish_reason, usage,
+                label,
+                chunk_path.name,
+                attempt,
+                MAX_EMPTY_RESPONSE_RETRIES,
+                finish_reason,
+                usage,
             )
             if attempt < MAX_EMPTY_RESPONSE_RETRIES:
                 await asyncio.sleep(2 ** (attempt - 1))
@@ -81,13 +96,15 @@ class Transcriber:
             "data": base64.b64encode(chunk_path.read_bytes()).decode("utf-8"),
             "format": chunk_path.suffix.lstrip("."),
         }
-        return [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": CHAT_TRANSCRIBE_PROMPT},
-                {"type": "input_audio", "input_audio": audio},
-            ],
-        }]
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": CHAT_TRANSCRIBE_PROMPT},
+                    {"type": "input_audio", "input_audio": audio},
+                ],
+            }
+        ]
 
     def _usage(self, response: object) -> str:
         usage = getattr(response, "usage", None)

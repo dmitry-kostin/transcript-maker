@@ -1,4 +1,3 @@
-
 from app.storage.record_store import SLUG_MAX_LENGTH
 
 
@@ -58,9 +57,10 @@ class TestLifecycle:
 
     def test_history_sorted_newest_first(self, tmp_results, history):
         import time
-        rid1 = history.records.create("First", "https://youtube.com/watch?v=a", 10)
+
+        history.records.create("First", "https://youtube.com/watch?v=a", 10)
         time.sleep(1.1)  # created_at has second-level precision
-        rid2 = history.records.create("Second", "https://youtube.com/watch?v=b", 20)
+        history.records.create("Second", "https://youtube.com/watch?v=b", 20)
         records = history.records.list_all()
         assert records[0]["title"] == "Second"
         assert records[1]["title"] == "First"
@@ -91,7 +91,7 @@ class TestEdgeCases:
         assert records[0]["title"] == "Live: Breaking News: Update"
 
     def test_title_with_yaml_special_chars(self, tmp_results, history):
-        rid = history.records.create("[Official] #1 Hit {2026}", "https://youtube.com/watch?v=abc", 60)
+        history.records.create("[Official] #1 Hit {2026}", "https://youtube.com/watch?v=abc", 60)
         records = history.records.list_all()
         assert records[0]["title"] == "[Official] #1 Hit {2026}"
 
@@ -106,7 +106,7 @@ class TestEdgeCases:
 
     def test_corrupt_md_skipped_in_history(self, tmp_results, history):
         # Create a valid record
-        rid = history.records.create("Good", "https://youtube.com/watch?v=abc", 60)
+        history.records.create("Good", "https://youtube.com/watch?v=abc", 60)
         # Write a file with no valid ID in the filename — should be skipped
         corrupt = tmp_results / "corrupt-no-id.md"
         corrupt.write_text("this is not valid frontmatter at all")
@@ -293,7 +293,7 @@ class TestFindCachedAudioByUrl:
 
     def test_finds_from_multiple_records(self, tmp_results, tmp_path, history):
         """When multiple records exist, finds the one with matching URL and audio."""
-        rid1 = history.records.create("Vid 1", "https://youtube.com/watch?v=aaa", 60)
+        history.records.create("Vid 1", "https://youtube.com/watch?v=aaa", 60)
         rid2 = history.records.create("Vid 2", "https://youtube.com/watch?v=bbb", 120)
         audio = tmp_path / "download.mp3"
         audio.write_bytes(b"\x00" * 1024)
@@ -351,6 +351,7 @@ class TestFrontmatterOrder:
 
     def _keys(self, history, rid: str) -> list[str]:
         import yaml
+
         text = history.records.file_path(rid).read_text()
         return list(yaml.safe_load(text.split("---", 2)[1]).keys())
 
